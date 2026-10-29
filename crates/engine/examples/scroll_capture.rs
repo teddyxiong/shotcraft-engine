@@ -41,6 +41,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Err(io::Error::other("scale_factor must be finite and positive").into());
     }
 
+    #[cfg(target_os = "windows")]
+    enigo::set_dpi_awareness()
+        .map_err(|()| io::Error::other("could not set per-monitor DPI awareness for the Windows capture test; launch this standalone test directly"))?;
+
     fs::create_dir(&output_dir)?;
     let stop = Arc::new(AtomicBool::new(false));
     let listener_stop = Arc::clone(&stop);

@@ -42,6 +42,11 @@ chmod +x ./scroll_capture
 .\scroll_capture.exe .\capture-win-01
 ```
 
+测试 CLI 在解析参数后自行启用 per-monitor DPI awareness；这只是独立测试程序的初始化，
+不改变 engine/Tauri 宿主，也不申请屏幕录制或输入权限。当前先在主屏验证。Windows 次屏
+自动滚动已知不可靠：Enigo 0.6 的绝对指针坐标按主显示器归一化，且未使用
+`MOUSEEVENTF_VIRTUALDESK`；因此 Windows 多屏尚未通过验收。macOS/Linux 的多屏测试保持原计划。
+
 ## Ubuntu 启动
 
 先使用 X11 桌面会话，可通过 `echo "$XDG_SESSION_TYPE"` 确认输出为 `x11`。
@@ -84,8 +89,11 @@ scroll_capture <新输出目录> <x> <y> <width> <height> <scale_factor>
 
 矩形为物理像素坐标；macOS 必须提供模拟窗口所在屏幕的真实缩放比例。
 例如 Retina 主屏上的窗口可用 `./scroll_capture ./capture-retina-01 200 200 800 600 2`。
-在副屏提供位于该副屏内的矩形，确认滚动和采集发生在同一块目标屏幕；同时验证一次
-主副屏缩放不同的情况。本工具不运行 Pluely14，因此这里测试的是模拟窗口坐标选屏。
+在 macOS/Linux 副屏提供位于该副屏内的矩形，确认滚动和采集发生在同一块目标屏幕；
+同时验证一次主副屏缩放不同的情况。本工具不运行 Pluely14，因此这里测试的是模拟窗口坐标选屏。
+
+Windows 主屏分别用 100%、150%、200% 缩放各运行一次，检查指针滚动位置、采集结果和图像尺寸。
+Windows 次屏仍需后续修复当前输入后端的虚拟桌面坐标映射，不能记为通过。
 
 ## 权限与失败记录
 
