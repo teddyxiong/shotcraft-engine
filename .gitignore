@@ -1,6 +1,6 @@
 /target
 /dist
-/mutants.out*
+/backups/
 .DS_Store
 .idea/
 .vscode/

@@ -10,7 +10,7 @@ use enigo::{Axis, Coordinate, Enigo, Mouse, Settings};
 use image::codecs::jpeg::JpegEncoder;
 use image::{ImageEncoder, RgbImage, RgbaImage};
 
-use crate::doc::stitch::{Push, Stitcher};
+use crate::stitch::{Push, Stitcher};
 use crate::{Error, Result, capture};
 
 #[derive(Clone, Copy)]
@@ -126,7 +126,7 @@ pub fn capture_to_base64(bounds: WindowBounds, format: Option<String>, quality: 
     if stop.load(Ordering::Relaxed) {
         return Err(Error::Other("scrolling capture stopped before first frame".into()));
     }
-    let first = capture::capture_monitor(Some(monitor_id), None)?.image;
+    let first = capture::capture_monitor(monitor_id)?;
     if first.width() == 0 || first.height() == 0 {
         return Err(Error::Other("selected display returned an empty capture".into()));
     }

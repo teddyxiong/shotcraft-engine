@@ -72,23 +72,23 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy
-        run: cargo clippy -p shotcraft-engine -p shotcraft-doc --all-targets --target ${{ matrix.target }} --locked -- -D warnings
+        run: cargo clippy --workspace --all-targets --target ${{ matrix.target }} --locked -- -D warnings
 
       - name: Unit tests
-        run: cargo test -p shotcraft-engine -p shotcraft-doc --target ${{ matrix.target }} --locked
+        run: cargo test --workspace --target ${{ matrix.target }} --locked
 
       - name: Build runnable test tool
-        run: cargo build -p shotcraft-engine --release --example scroll_capture --target ${{ matrix.target }} --locked
+        run: cargo build --release --bin scroll_capture --target ${{ matrix.target }} --locked
 
       - name: Smoke test and collect files
         shell: bash
         run: |
-          binary="target/${{ matrix.target }}/release/examples/scroll_capture${{ matrix.extension }}"
+          binary="target/${{ matrix.target }}/release/scroll_capture${{ matrix.extension }}"
           "$binary" --help
           mkdir -p dist/engine
           cp "$binary" dist/engine/
-          cp LICENSE-MIT LICENSE-APACHE ATTRIBUTION.md THIRD-PARTY-LICENSES.md dist/engine/
-          cp docs/2026-10-29-engine-platform-testing.md dist/engine/README.md
+          cp LICENSE-MIT LICENSE-APACHE NOTICE ATTRIBUTION.md THIRD-PARTY-LICENSES.md dist/engine/
+          cp README.md dist/engine/README.md
           git rev-parse HEAD > dist/engine/commit.txt
           rustc -Vv > dist/engine/toolchain.txt
 
