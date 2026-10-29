@@ -4581,6 +4581,7 @@ name = "shotcraft-engine"
 version = "0.1.0-beta.1"
 dependencies = [
  "arboard",
+ "base64",
  "chrono",
  "dirs",
  "emath",

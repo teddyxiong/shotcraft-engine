@@ -7,6 +7,7 @@ pub mod config;
 pub mod history;
 pub mod ocr;
 pub mod ops;
+pub mod scrolling;
 pub mod share;
 
 pub use shotcraft_doc as doc;
