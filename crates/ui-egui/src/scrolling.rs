@@ -74,6 +74,18 @@ struct Session {
 
 pub fn run(monitor_id: Option<u32>, display: Option<usize>, rect: IRect, start: bool, autoscroll: bool) -> anyhow::Result<Option<RgbaImage>> {
     let shot = capture::capture_monitor(monitor_id, display)?;
+    if std::env::var_os("SHOTCRAFT_SCROLL_DEBUG_DIR").is_some() {
+        eprintln!(
+            "[scroll-debug] monitor={} origin=({}, {}) geometry={}x{} scale={} image={:?}",
+            shot.id,
+            shot.x,
+            shot.y,
+            shot.width,
+            shot.height,
+            shot.scale,
+            shot.image.dimensions()
+        );
+    }
     let rect =
         IRect::clipped(Rect::from_min_size(pos2(rect.x as f32, rect.y as f32), vec2(rect.w as f32, rect.h as f32)), shot.image.width(), shot.image.height())
             .ok_or_else(|| anyhow::anyhow!("area is outside the display"))?;
@@ -103,6 +115,12 @@ pub fn run(monitor_id: Option<u32>, display: Option<usize>, rect: IRect, start: 
     Ok(result.borrow_mut().take())
 }
 
+fn save_diagnostic(path: &std::path::Path, frame: &RgbaImage) -> anyhow::Result<()> {
+    let mut file = std::fs::File::create_new(path)?;
+    frame.write_to(&mut file, image::ImageFormat::Png)?;
+    Ok(())
+}
+
 fn capture_loop(shared: Arc<Mutex<Shared>>, monitor_id: u32, rect: IRect, center: (i32, i32)) {
     use enigo::{Axis, Coordinate, Mouse};
     let Some(monitor) = capture::Monitor::by_id(monitor_id) else {
@@ -111,6 +129,9 @@ fn capture_loop(shared: Arc<Mutex<Shared>>, monitor_id: u32, rect: IRect, center
     };
     // Created on first auto-scroll: on macOS it needs the Accessibility permission, plain capture does not.
     let mut enigo: Option<enigo::Enigo> = None;
+    let debug_dir = std::env::var_os("SHOTCRAFT_SCROLL_DEBUG_DIR").map(std::path::PathBuf::from);
+    let (mut saved_initial, mut saved_failure) = (false, false);
+    let mut frame_number = 0u64;
     loop {
         let (stop, running, auto) = {
             let s = lock(&shared);
@@ -123,13 +144,41 @@ fn capture_loop(shared: Arc<Mutex<Shared>>, monitor_id: u32, rect: IRect, center
             std::thread::sleep(Duration::from_millis(50));
             continue;
         }
-        let frame = monitor.capture().map(|img| capture::crop(&img, rect));
+        frame_number = frame_number.saturating_add(1);
+        let frame = monitor.capture().map(|img| (capture::crop(&img, rect), img.dimensions()));
         let mut s = lock(&shared);
         match frame {
-            Ok(frame) => {
+            Ok((frame, raw_size)) => {
                 // The session took the stitcher: it is finishing.
                 let Some(stitcher) = s.stitcher.as_mut() else { return };
+                let debug_frame = debug_dir.as_ref().filter(|_| !saved_initial || !saved_failure).map(|_| frame.clone());
+                if debug_dir.is_some() {
+                    eprintln!("[scroll-debug] frame={frame_number} monitor={monitor_id} raw={raw_size:?} crop={:?} rect={rect:?}", frame.dimensions());
+                }
                 let pushed = stitcher.push(frame);
+                eprintln!("[scroll] result={pushed:?}, height={}", stitcher.height());
+                if let Some(dir) = &debug_dir {
+                    eprintln!("[scroll-debug] frame={frame_number} {:?}", stitcher.diagnostic());
+                    let name = match pushed {
+                        Push::Appended(_) if !saved_initial => {
+                            saved_initial = true;
+                            Some("initial.png")
+                        }
+                        Push::NoMatch if saved_initial && !saved_failure => {
+                            saved_failure = true;
+                            Some("first-failure.png")
+                        }
+                        _ => None,
+                    };
+                    if let (Some(name), Some(frame)) = (name, debug_frame) {
+                        let path = dir.join(name);
+                        match save_diagnostic(&path, &frame) {
+                            Ok(()) => eprintln!("[scroll-debug] frame={frame_number} saved={}", path.display()),
+                            Err(error) => eprintln!("[scroll-debug] frame={frame_number} save failed {}: {error}", path.display()),
+                        }
+                    }
+                }
+
                 let full = stitcher.is_full();
                 s.unchanged = if pushed == Push::Unchanged { s.unchanged + 1 } else { 0 };
                 if matches!(pushed, Push::Appended(_)) {
@@ -140,7 +189,12 @@ fn capture_loop(shared: Arc<Mutex<Shared>>, monitor_id: u32, rect: IRect, center
                     s.reached_end = true;
                 }
             }
-            Err(e) => s.error = Some(e.to_string()),
+            Err(e) => {
+                if debug_dir.is_some() {
+                    eprintln!("[scroll-debug] frame={frame_number} monitor={monitor_id} capture failed: {e}");
+                }
+                s.error = Some(e.to_string());
+            }
         }
         drop(s);
         if auto {
@@ -173,7 +227,15 @@ impl Session {
         }
         if keep {
             let stitcher = lock(&self.shared).stitcher.take();
-            *self.result.borrow_mut() = stitcher.and_then(Stitcher::finish);
+            let result = stitcher.and_then(Stitcher::finish);
+            if let (Some(image), Some(dir)) = (&result, std::env::var_os("SHOTCRAFT_SCROLL_DEBUG_DIR")) {
+                let path = std::path::PathBuf::from(dir).join("stitched.png");
+                match save_diagnostic(&path, image) {
+                    Ok(()) => eprintln!("[scroll-debug] final={:?} saved={}", image.dimensions(), path.display()),
+                    Err(error) => eprintln!("[scroll-debug] final save failed {}: {error}", path.display()),
+                }
+            }
+            *self.result.borrow_mut() = result;
         }
         self.closing = true;
         ctx.send_viewport_cmd_to(ViewportId::ROOT, egui::ViewportCommand::Close);
@@ -213,7 +275,9 @@ impl eframe::App for Session {
         if self.closing {
             return;
         }
-        self.frame_windows(ctx);
+        if std::env::var_os("SHOTCRAFT_SCROLL_DEBUG_DIR").is_none() {
+            self.frame_windows(ctx);
+        }
         let (running, auto, reached_end, height, error, preview) = {
             let mut s = lock(&self.shared);
             if s.error.is_none() && !s.stop && self.worker.as_ref().is_some_and(|w| w.is_finished()) {
