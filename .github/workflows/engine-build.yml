@@ -1,0 +1,108 @@
+name: Engine native builds
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env:
+      # The downloaded Windows exe must also run without Visual Studio installed.
+      CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: -C target-feature=+crt-static
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS ARM64
+            runner: macos-latest
+            target: aarch64-apple-darwin
+            artifact: scroll-capture-macos-arm64
+            extension: ''
+          - name: macOS Intel
+            runner: macos-15-intel
+            target: x86_64-apple-darwin
+            artifact: scroll-capture-macos-x64
+            extension: ''
+          - name: Windows x64
+            runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: scroll-capture-windows-x64
+            extension: '.exe'
+          - name: Ubuntu x64
+            runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            artifact: scroll-capture-ubuntu-x64
+            extension: ''
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libclang-dev libxcb1-dev libgbm-dev libegl-dev libpipewire-0.3-dev libspa-0.2-dev
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+          components: clippy, rustfmt
+
+      - name: Use Rust's LLD on Linux, as in the existing release build
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          host=$(rustc -vV | sed -n 's/^host: //p')
+          sysroot=$(rustc --print sysroot)
+          echo "RUSTFLAGS=-C link-arg=-fuse-ld=lld -C link-arg=-B$sysroot/lib/rustlib/$host/bin/gcc-ld" >> "$GITHUB_ENV"
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: engine-${{ matrix.target }}
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy -p shotcraft-engine -p shotcraft-doc --all-targets --target ${{ matrix.target }} --locked -- -D warnings
+
+      - name: Unit tests
+        run: cargo test -p shotcraft-engine -p shotcraft-doc --target ${{ matrix.target }} --locked
+
+      - name: Build runnable test tool
+        run: cargo build -p shotcraft-engine --release --example scroll_capture --target ${{ matrix.target }} --locked
+
+      - name: Smoke test and collect files
+        shell: bash
+        run: |
+          binary="target/${{ matrix.target }}/release/examples/scroll_capture${{ matrix.extension }}"
+          "$binary" --help
+          mkdir -p dist/engine
+          cp "$binary" dist/engine/
+          cp LICENSE-MIT LICENSE-APACHE ATTRIBUTION.md THIRD-PARTY-LICENSES.md dist/engine/
+          cp docs/2026-10-29-engine-platform-testing.md dist/engine/README.md
+          git rev-parse HEAD > dist/engine/commit.txt
+          rustc -Vv > dist/engine/toolchain.txt
+
+      - name: Ubuntu 22.04 startup compatibility
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          ldd dist/engine/scroll_capture > dist/engine/linux-libraries.txt
+          docker run --rm -v "$PWD/dist/engine:/artifact:ro" ubuntu:22.04 \
+            sh -ec 'apt-get update -qq; apt-get install -y -qq --no-install-recommends libpipewire-0.3-0 libxcb1 libgbm1 libegl1 libx11-6; /artifact/scroll_capture --help'
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/engine/
+          if-no-files-found: error
+          retention-days: 14
