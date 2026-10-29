@@ -49,7 +49,7 @@ chmod +x ./scroll_capture
 
 ```sh
 sudo apt-get update
-sudo apt-get install -y libpipewire-0.3-0 libxcb1 libgbm1 libegl1 libx11-6
+sudo apt-get install -y libpipewire-0.3-0 libxcb1 libgbm1 libegl1 libx11-6 libwayland-client0
 chmod +x ./scroll_capture
 ./scroll_capture ./capture-ubuntu-01
 ```

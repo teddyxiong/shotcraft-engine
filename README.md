@@ -105,7 +105,7 @@ cargo build --release
 The binary is `target/release/shotcraft` (`shotcraft.exe` on Windows).
 Each platform also needs a C toolchain and, on Linux, some development packages:
 
-- Linux (Debian and Ubuntu package names): `build-essential pkg-config libclang-dev libxcb1-dev libgbm-dev libegl-dev libpipewire-0.3-dev libspa-0.2-dev`.
+- Linux (Debian and Ubuntu package names): `build-essential pkg-config libclang-dev libxcb1-dev libgbm-dev libegl-dev libpipewire-0.3-dev libspa-0.2-dev libwayland-dev`.
 - Windows: the MSVC toolchain, with the "Desktop development with C++" workload of the Visual Studio Build Tools (the rustup installer offers it).
 - macOS: the Xcode Command Line Tools (`xcode-select --install`).
 
