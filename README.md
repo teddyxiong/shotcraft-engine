@@ -1,7 +1,7 @@
 # ShotCraft Engine
 
 一个可被其他 Rust 软件直接调用的全屏滚动截屏组件，同时提供命令行程序 `scroll_capture`。
-保留选屏、连续采集、向下拼接、JPEG/PNG 编码、Base64 输出和中途停止。
+保留选屏、连续采集、向下拼接、逐页截图、JPEG/PNG 编码、Base64 输出和中途停止。
 截图核心不创建窗口、不写文件、不操作剪贴板；命令行程序负责将结果保存到指定目录。
 
 ## 编译
@@ -81,6 +81,52 @@ scroll_capture <新输出目录> <x> <y> <width> <height> <scale_factor>
 
 `scroll_capture --help` 仅显示用法，不开始采集。
 
+## 按 PageDown 逐张保存
+
+增加前置参数 `--pages`，切换为分页模式：
+
+```sh
+./target/release/scroll_capture --pages ./pages-01
+```
+
+Windows PowerShell：
+
+```powershell
+.\target\release\scroll_capture.exe --pages .\pages-01
+```
+
+也可指定目标屏幕对应的模拟窗口外框，例如：
+
+```sh
+./target/release/scroll_capture --pages ./pages-retina-01 200 200 800 600 2
+```
+
+程序读取所选屏幕的实际截图尺寸，先截取第一屏，随后每次发送一次 PageDown，等待 350 ms 后再采集。
+每张图片保留该次完整屏幕的像素尺寸，不缩放、不拼接。翻页距离由应用的 PageDown 行为决定，
+不以显示器像素高度直接换算滚轮次数；相邻图片允许有重叠。
+
+10 秒准备时间内，请让目标网页正文获得键盘焦点，并确保它位于所选屏幕。
+分页模式只发送 PageDown，不移动鼠标、不点击或抢占焦点；地址栏、编辑框或嵌套滚动区域
+持有焦点时，PageDown 可能不会翻动目标页面。应用滚动动画及异步加载需在真实桌面测试。
+切回终端手动停止也可能将终端截为下一张；客户端可通过停止标记结束采集，保持目标页面的焦点。
+
+采集正常结束或收到 `stop` 后，CLI 按采集顺序分别保存：
+
+```text
+page-0001.jpg
+page-0001.base64
+page-0002.jpg
+page-0002.base64
+...
+```
+
+JPEG 质量仍为 80，Base64 对应各自的 JPEG；未带 `--pages` 时仍输出 `capture.jpg` 和 `capture.base64`。
+库在过程中保留已编码的图片列表，CLI 在函数返回后写文件，因此强行结束进程不能保证保存已有页面。
+
+分页模式最多尝试采集 50 帧，跳过像素完全相同的连续帧，连续 3 帧完全不变时结束；
+每张独立图片不受拼接长图 40,000 像素高度限制。视频、动画或系统状态变化可能使画面始终不同，
+此时可主动 `stop` 或等待达到次数上限；当前不做相似度去重。
+
 ## 被其他 Rust 软件调用
 
 在调用方的 `Cargo.toml` 添加依赖。本地开发示例：
@@ -100,7 +146,7 @@ shotcraft-engine = { git = "https://github.com/teddyxiong/shotcraft-engine.git",
 主要接口位于 `shotcraft_engine::scrolling`：
 
 ```rust
-use shotcraft_engine::scrolling::{WindowBounds, capture_to_base64};
+use shotcraft_engine::scrolling::{CaptureMode, WindowBounds, capture_to_base64};
 use std::sync::{Arc, atomic::AtomicBool};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -115,17 +161,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let stop = Arc::new(AtomicBool::new(false));
     let worker_stop = Arc::clone(&stop);
     let task = std::thread::spawn(move || {
-        capture_to_base64(bounds, Some("jpeg".into()), Some(80), &worker_stop)
+        capture_to_base64(bounds, Some("jpeg".into()), Some(80), &worker_stop, CaptureMode::Stitched)
     });
 
     // 将 stop 保留在应用状态中，供其他事件处理函数发送停止信号。
     // 此命令行示例只等待结果；UI 软件不要在事件线程上同步 join。
-    let base64 = task.join()
+    let images = task.join()
         .map_err(|_| std::io::Error::other("capture worker panicked"))??;
-    println!("JPEG Base64 length: {}", base64.len());
+    println!("Captured images: {}", images.len());
     Ok(())
 }
 ```
+
+采集入口新增最后一个 `CaptureMode` 参数，返回值统一为 `Result<Vec<String>>`：
+
+- `CaptureMode::Stitched`：返回一张拼接长图的 Base64，列表长度为 1。
+- `CaptureMode::Pages`：返回按采集顺序排列的独立页面 Base64 列表，不进行拼接。
+
+调用分页模式时，将上例的 `CaptureMode::Stitched` 改为 `CaptureMode::Pages`。
+调用方按列表逐张使用图片；已有图片的 `encode_image_to_base64` 接口仍返回单个 `String`。
 
 控制侧收到停止指令或快捷键后，在其事件处理函数中执行：
 
@@ -152,18 +206,40 @@ let base64 = shotcraft_engine::scrolling::encode_image_to_base64(
 ```
 
 `jpg` / `jpeg` 使用 JPEG，质量默认 80、限制为 1–100，透明像素合成白底。
-`png` 或其他格式参数（包括 `None`）使用 PNG。返回值均为纯 Base64 字符串。
-不缩放图片，完成拼接后才进行一次编码。
+`png` 或其他格式参数（包括 `None`）使用 PNG。每张图片均编码为不带前缀的 Base64 字符串。
+不缩放图片；拼接模式完成拼接后编码一次，分页模式对每张完整截图分别编码。
+
+## 只截第一屏：待实现方案
+
+当前公开接口和 CLI 尚未提供单屏模式。现有流程已经先截取第一帧，再初始化鼠标控制器并发送滚轮事件，
+因此可以用一个小开关扩展，不需要另写一套截图实现。
+
+当前模式参数已包含 `Stitched`、`Pages`。后续单屏能力可在同一参数中增加 `Single`，
+无需再增加独立的 `scroll_enabled` 开关：完成选屏和首帧采集、校验后，直接编码并返回长度为 1 的列表。
+在创建连续采集后端和输入控制器之前返回，跳过输入事件、帧间等待及拼接循环。
+
+CLI 拟增加 `--single`，默认仍执行滚动截图。**该参数尚未实现，当前不能使用。**
+单屏结果沿用现有输出格式、质量、原始尺寸及文件保存规则。
+
+单屏模式不通过预置 `stop=true` 实现：当前首帧前收到停止信号会返回错误，
+靠启动后立即发送停止指令也无法可靠保证只采集一帧。新增模式仍应保留原来的停止语义。
+验收时需确认只采集一次、不创建鼠标控制器、不移动鼠标或滚动，输出尺寸与首帧一致。
+
+单屏模式仍需要屏幕采集授权，但无需执行自动滚动所需的输入控制。
+它本身不会补齐下文的原生 Wayland 适配。
 
 ## 平台与当前边界
 
-- 最多采集 50 帧或高 40,000 像素；连续 3 帧完全不变也会结束。
+- 拼接模式最多采集 50 帧或高 40,000 像素；连续 3 帧完全不变也会结束。
   达到上限返回已采集部分，不保证任意长度页面都到达底部。
-- 连续 3 帧无法可靠拼接时返回错误。停止与当前采集/滚动报错同时发生时优先返回已有部分。
-- 自动滚动会移动鼠标并改变页面；无截图窗口不代表桌面画面静止。
+- 拼接模式连续 3 帧无法可靠拼接时返回错误；分页模式不要求相邻图片能匹配。
+  停止与当前采集/翻页报错同时发生时优先返回已有结果。
+- 拼接模式会移动鼠标并发送滚轮事件；分页模式发送 PageDown。两种模式均会改变页面，
+  无截图窗口不代表桌面画面静止。
 - macOS：依赖调用进程已有的屏幕录制及自动滚动所需权限。
 - Windows：独立 CLI 初始化 DPI awareness；库不改变宿主的进程级 DPI 设置。
-  当前 Enigo 后端按主屏归一化鼠标绝对坐标，副屏自动滚动已知不可靠，先在主屏验收。
+  拼接模式使用的 Enigo 绝对鼠标定位按主屏归一化，副屏滚轮操作已知不可靠，先在主屏验收。
+  分页模式只发送键盘事件，需确保焦点和目标屏幕一致；副屏效果仍需实机验收。
 - Ubuntu：当前自动滚动使用 X11 后端，原生 Wayland 尚未适配。
   在 X11 桌面运行可用 `echo "$XDG_SESSION_TYPE"` 确认会话。
 - Ubuntu 24.04 用于构建。工作流额外在 22.04 容器运行 `--help` 验证启动兼容；
@@ -172,6 +248,39 @@ let base64 = shotcraft_engine::scrolling::encode_image_to_base64(
 ```sh
 sudo apt-get install -y libpipewire-0.3-0 libxcb1 libgbm1 libegl1 libx11-6 libwayland-client0
 ```
+
+## 原生 Wayland：适配条件与当前状态
+
+本项目尚未完成原生 Wayland 的滚动截图适配。当前锁定的 xcap 有 Wayland 单次截图路径，
+但本项目没有维护持续的 Portal/PipeWire 采集会话；Enigo 当前仅启用默认 X11 输入后端。
+安装 Wayland 开发包、编译成功或单次截图成功，都不能证明原生 Wayland 自动滚动已可用。
+
+适配需要分别满足屏幕采集与输入控制条件：
+
+| 条件 | 用途 |
+| --- | --- |
+| 实际 Wayland 桌面会话、可用的用户会话 D-Bus | 与桌面服务通信并在真实环境验证 |
+| xdg-desktop-portal 及匹配桌面的后端 | 由 GNOME、KDE 等桌面实际提供所需接口 |
+| ScreenCast Portal 与 PipeWire | 在授权会话中持续读取所选屏幕的帧 |
+| RemoteDesktop Portal 的输入控制能力 | 拼接模式需指针/滚轮输入，分页模式需键盘 PageDown；通过受支持的接口或 libei/EIS 路径发送 |
+| 用户授予屏幕及所用输入设备的访问权限 | 指针和键盘权限需按模式确认；只获屏幕授权不能代替输入授权 |
+
+最小适配方向是建立并复用一次授权会话，持续取帧并发送滚动事件，再接入现有拼接、编码和停止逻辑。
+需验证所选输入后端与桌面提供的接口相匹配；只启用一个 Enigo feature 不等于整条流程已适配。
+屏幕流的位置、尺寸与缩放还需对应到目标显示器，不能直接假定合成器坐标就是物理像素，
+也不能保证原来的窗口外框重叠选屏方法在原生 Wayland 上直接成立。
+
+组件可以继续不创建截图面板或预览，但标准 Portal 流程通常会显示系统授权、选屏界面。
+支持持久化的桌面可通过 `persist_mode`、`restore_token` 减少重复授权；令牌需要按规范更新，
+权限撤销、屏幕变化或会话恢复失败时仍可能重新提示。因此不能统一承诺首次也无弹窗，或永久无系统提示。
+
+若需切到浏览器后用全局快捷键停止，还要确认桌面支持 GlobalShortcuts Portal 并由宿主绑定；
+现有停止标记可以复用。建议先以 Ubuntu 24.04 + GNOME Wayland 验证持续取帧、自动滚动、拼接和中途停止，
+再分别验证 KDE 等环境，不能只按 Ubuntu 版本判定支持。
+
+参考：[ScreenCast](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.ScreenCast.html)、
+[RemoteDesktop](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.RemoteDesktop.html)、
+[GlobalShortcuts](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.GlobalShortcuts.html)。
 
 ## GitHub Actions 手动编译
 

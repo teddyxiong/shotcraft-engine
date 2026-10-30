@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use enigo::{Axis, Coordinate, Enigo, Mouse, Settings};
+use enigo::{Axis, Coordinate, Direction, Enigo, Key, Keyboard, Mouse, Settings};
 use image::codecs::jpeg::JpegEncoder;
 use image::{ImageEncoder, RgbImage, RgbaImage};
 
@@ -32,6 +32,14 @@ pub struct WindowBounds {
     pub height: u32,
     /// Tauri window scale factor; used to convert physical bounds to macOS logical coordinates.
     pub scale_factor: f64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CaptureMode {
+    /// Stitch the scrolling content into one image, rejecting unmatched frames.
+    Stitched,
+    /// Return each changed full-screen frame separately; PageDown advances the application.
+    Pages,
 }
 
 fn bounds_rect(bounds: WindowBounds) -> Result<Rect> {
@@ -74,16 +82,16 @@ fn pointer_coordinate(value: f64) -> Result<i32> {
     Ok(rounded as i32)
 }
 
-/// Capture a scrolling page on the display that best overlaps `bounds`, then return a plain
-/// Base64 encoded image. This call blocks while it captures and scrolls. The caller must hide
-/// its own windows when they should not appear in the capture and grant screen-recording and
-/// pointer-control permissions where the operating system requires them. Set `stop` with
-/// `Ordering::Relaxed` to request stopping; a current screen capture and the remaining portion
-/// of the 350 ms inter-scroll wait cannot be interrupted.
+/// Capture a scrolling page on the display that best overlaps `bounds`, then return one stitched
+/// image or individual pages as plain Base64 strings. Stitched mode moves the pointer to the
+/// display center and uses wheel scrolling; Pages mode sends PageDown to the focused application,
+/// which the caller must focus beforehand. The caller must hide its own windows when needed and
+/// grant the required screen-recording and input permissions. Set `stop` with `Ordering::Relaxed`
+/// to request stopping; an in-flight capture and the remaining 350 ms wait cannot be interrupted.
 ///
 /// `format` selects JPEG with `jpg` or `jpeg`; every other value uses PNG. JPEG quality defaults
 /// to 80 and is clamped to 1–100. Only the selected display is captured.
-pub fn capture_to_base64(bounds: WindowBounds, format: Option<String>, quality: Option<u8>, stop: &AtomicBool) -> Result<String> {
+pub fn capture_to_base64(bounds: WindowBounds, format: Option<String>, quality: Option<u8>, stop: &AtomicBool, mode: CaptureMode) -> Result<Vec<String>> {
     if stop.load(Ordering::Relaxed) {
         return Err(Error::Other("scrolling capture stopped before first frame".into()));
     }
@@ -93,7 +101,7 @@ pub fn capture_to_base64(bounds: WindowBounds, format: Option<String>, quality: 
     if bounds.width == 0 || bounds.height == 0 {
         return Err(Error::Other("window bounds must have a positive size".into()));
     }
-    let mut selected: Option<(f64, f64, u32, (i32, i32))> = None;
+    let mut selected: Option<(f64, f64, u32, (f64, f64))> = None;
     let monitors = xcap::Monitor::all()?;
     if monitors.is_empty() {
         return Err(Error::NoMonitors);
@@ -118,11 +126,11 @@ pub fn capture_to_base64(bounds: WindowBounds, format: Option<String>, quality: 
             .as_ref()
             .is_none_or(|(best_area, best_distance, _, _)| area > *best_area || (area == 0.0 && *best_area == 0.0 && distance < *best_distance));
         if replace {
-            let center = (pointer_coordinate(monitor_center.0)?, pointer_coordinate(monitor_center.1)?);
-            selected = Some((area, distance, monitor.id()?, center));
+            selected = Some((area, distance, monitor.id()?, monitor_center));
         }
     }
-    let (_, _, monitor_id, center) = selected.ok_or(Error::NoMonitors)?;
+    let (_, _, monitor_id, monitor_center) = selected.ok_or(Error::NoMonitors)?;
+    let center = if mode == CaptureMode::Stitched { Some((pointer_coordinate(monitor_center.0)?, pointer_coordinate(monitor_center.1)?)) } else { None };
     if stop.load(Ordering::Relaxed) {
         return Err(Error::Other("scrolling capture stopped before first frame".into()));
     }
@@ -132,43 +140,56 @@ pub fn capture_to_base64(bounds: WindowBounds, format: Option<String>, quality: 
     }
     let monitor = if stop.load(Ordering::Relaxed) { None } else { Some(capture::Monitor::by_id(monitor_id).ok_or(Error::MonitorGone(monitor_id))?) };
     let mut enigo = None;
-    let image = collect_frames(
+    let images = collect_frames(
         first,
         stop,
+        mode,
         || monitor.as_ref().ok_or_else(|| Error::Other("scrolling capture stopped before next frame".into()))?.capture(),
         || {
             if enigo.is_none() {
-                enigo = Some(Enigo::new(&Settings::default()).map_err(|error| {
-                    Error::Other(format!("cannot control the pointer for scrolling (check Accessibility/Input Monitoring permissions): {error}"))
-                })?);
+                enigo =
+                    Some(Enigo::new(&Settings::default()).map_err(|error| {
+                        Error::Other(format!("cannot initialize scrolling input (check Accessibility/Input Monitoring permissions): {error}"))
+                    })?);
             }
-            enigo
-                .as_mut()
-                .ok_or_else(|| Error::Other("pointer controller was not initialized".into()))?
-                .move_mouse(center.0, center.1, Coordinate::Abs)
-                .map_err(|error| Error::Other(format!("cannot move the pointer for scrolling (check Accessibility/Input Monitoring permissions): {error}")))?;
             if stop.load(Ordering::Relaxed) {
                 return Ok(false);
             }
-            enigo
-                .as_mut()
-                .ok_or_else(|| Error::Other("pointer controller was not initialized".into()))?
-                .scroll(3, Axis::Vertical)
-                .map_err(|error| Error::Other(format!("scroll input failed: {error}")))?;
+            let controller = enigo.as_mut().ok_or_else(|| Error::Other("pointer controller was not initialized".into()))?;
+            match mode {
+                CaptureMode::Stitched => {
+                    let center = center.ok_or_else(|| Error::Other("stitched scrolling pointer center is unavailable".into()))?;
+                    controller.move_mouse(center.0, center.1, Coordinate::Abs).map_err(|error| {
+                        Error::Other(format!("cannot move the pointer for scrolling (check Accessibility/Input Monitoring permissions): {error}"))
+                    })?;
+                    if stop.load(Ordering::Relaxed) {
+                        return Ok(false);
+                    }
+                    controller.scroll(3, Axis::Vertical).map_err(|error| Error::Other(format!("scroll input failed: {error}")))?;
+                }
+                CaptureMode::Pages => {
+                    controller.key(Key::PageDown, Direction::Click).map_err(|error| Error::Other(format!("PageDown input failed: {error}")))?
+                }
+            }
             thread::sleep(Duration::from_millis(350));
             Ok(true)
         },
+        |image| encode_image_to_base64(image, format.clone(), quality),
     )?;
-    encode_image_to_base64(&image, format, quality)
+    Ok(images)
 }
 
 fn collect_frames(
     first: RgbaImage,
     stop: &AtomicBool,
+    mode: CaptureMode,
     mut next_frame: impl FnMut() -> Result<RgbaImage>,
     mut scroll: impl FnMut() -> Result<bool>,
-) -> Result<RgbaImage> {
-    let mut stitcher = Stitcher::new(40_000);
+    mut encode: impl FnMut(&RgbaImage) -> Result<String>,
+) -> Result<Vec<String>> {
+    let mut stitcher = (mode == CaptureMode::Stitched).then(|| Stitcher::new(40_000));
+    let mut pages = Vec::new();
+    let mut last_page: Option<RgbaImage> = None;
     let mut unchanged = 0usize;
     let mut no_match = 0usize;
     let mut first = Some(first);
@@ -185,28 +206,42 @@ fn collect_frames(
                 Err(error) => return Err(error),
             }
         };
-        let result = stitcher.push(frame);
-        match result {
-            Push::Appended(_) => {
-                unchanged = 0;
-                no_match = 0;
+        match mode {
+            CaptureMode::Stitched => {
+                let result = stitcher.as_mut().ok_or_else(|| Error::Other("stitcher was not initialized".into()))?.push(frame);
+                match result {
+                    Push::Appended(_) => {
+                        unchanged = 0;
+                        no_match = 0;
+                    }
+                    Push::Unchanged => {
+                        unchanged += 1;
+                        no_match = 0;
+                    }
+                    Push::NoMatch => {
+                        no_match += 1;
+                        unchanged = 0;
+                    }
+                }
             }
-            Push::Unchanged => {
-                unchanged += 1;
-                no_match = 0;
-            }
-            Push::NoMatch => {
-                no_match += 1;
-                unchanged = 0;
+            CaptureMode::Pages => {
+                if last_page.as_ref().is_some_and(|last| last == &frame) {
+                    unchanged += 1;
+                } else {
+                    unchanged = 0;
+                    pages.push(encode(&frame)?);
+                    last_page = Some(frame);
+                }
             }
         }
         if stop.load(Ordering::Relaxed) {
             break;
         }
-        if no_match >= 3 {
+        if mode == CaptureMode::Stitched && no_match >= 3 {
             return Err(Error::Other("scrolling capture could not match three consecutive frames".into()));
         }
-        if unchanged >= 3 || stitcher.is_full() || frame_number == 49 {
+        let full = stitcher.as_ref().is_some_and(Stitcher::is_full);
+        if unchanged >= 3 || full || frame_number == 49 {
             break;
         }
         if stop.load(Ordering::Relaxed) {
@@ -219,7 +254,17 @@ fn collect_frames(
             Err(error) => return Err(error),
         }
     }
-    stitcher.finish().ok_or_else(|| Error::Other("scrolling capture produced no image".into()))
+    match mode {
+        CaptureMode::Stitched => {
+            let image = stitcher
+                .ok_or_else(|| Error::Other("stitcher was not initialized".into()))?
+                .finish()
+                .ok_or_else(|| Error::Other("scrolling capture produced no image".into()))?;
+            Ok(vec![encode(&image)?])
+        }
+        CaptureMode::Pages if pages.is_empty() => Err(Error::Other("scrolling capture produced no pages".into())),
+        CaptureMode::Pages => Ok(pages),
+    }
 }
 
 /// Encode an existing stitched image using the capture API's format and quality conventions.
@@ -271,6 +316,7 @@ mod tests {
         let partial = collect_frames(
             first.clone(),
             &stop,
+            CaptureMode::Stitched,
             || {
                 captures += 1;
                 Err(Error::Other("unexpected next frame".into()))
@@ -280,8 +326,9 @@ mod tests {
                 stop.store(true, Ordering::Relaxed);
                 Ok(true)
             },
+            |image| encode_image_to_base64(image, None, None),
         )?;
-        assert_eq!(partial, first);
+        assert_eq!(partial, vec![encode_image_to_base64(&first, None, None)?]);
         assert_eq!(scrolls, 1);
         assert_eq!(captures, 0);
         Ok(())
@@ -295,15 +342,47 @@ mod tests {
         let partial = collect_frames(
             first.clone(),
             &stop,
+            CaptureMode::Stitched,
             || {
                 captures += 1;
                 stop.store(true, Ordering::Relaxed);
                 Err(Error::Other("capture interrupted".into()))
             },
             || Ok(true),
+            |image| encode_image_to_base64(image, None, None),
         )?;
-        assert_eq!(partial, first);
+        assert_eq!(partial, vec![encode_image_to_base64(&first, None, None)?]);
         assert_eq!(captures, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn pages_mode_preserves_changed_frames_and_skips_exact_duplicates() -> Result<()> {
+        let first = RgbaImage::from_pixel(8, 8, image::Rgba([30, 60, 90, 255]));
+        let second = RgbaImage::from_pixel(8, 8, image::Rgba([180, 70, 20, 255]));
+        let stop = AtomicBool::new(false);
+        let mut captures = 0;
+        let pages = collect_frames(
+            first.clone(),
+            &stop,
+            CaptureMode::Pages,
+            || {
+                captures += 1;
+                Ok(second.clone())
+            },
+            || Ok(true),
+            |image| encode_image_to_base64(image, None, None),
+        )?;
+        assert_eq!(captures, 4);
+        assert_eq!(pages.len(), 2);
+        let decoded = pages
+            .into_iter()
+            .map(|page| {
+                let bytes = STANDARD.decode(page).map_err(|error| Error::Other(error.to_string()))?;
+                Ok(image::load_from_memory(&bytes)?.to_rgba8())
+            })
+            .collect::<Result<Vec<_>>>()?;
+        assert_eq!(decoded, vec![first, second]);
         Ok(())
     }
 

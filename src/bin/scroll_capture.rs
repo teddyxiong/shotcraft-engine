@@ -12,11 +12,13 @@ use std::time::Duration;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use shotcraft_engine::scrolling::{WindowBounds, capture_to_base64};
+use shotcraft_engine::scrolling::{CaptureMode, WindowBounds, capture_to_base64};
 
-const USAGE: &str = "Usage: scroll_capture <new-output-directory> [x y width height scale_factor]\n\
+const USAGE: &str = "Usage: scroll_capture [--pages] <new-output-directory> [x y width height scale_factor]\n\
 Bounds are physical outer-window coordinates; scale_factor is required for macOS mixed-DPI display selection.\n\
 Without geometry, selects the display containing the desktop origin using bounds (0, 0, 100, 100).\n\
+Default mode stitches scrolling content; --pages saves each distinct full-screen frame and advances with PageDown.\n\
+In --pages mode, focus the browser page yourself; PageDown behavior depends on the application.\n\
 During capture, enter exactly `stop` on stdin to request a partial result.";
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -28,7 +30,22 @@ fn main() -> Result<(), Box<dyn Error>> {
         println!("{USAGE}");
         return Ok(());
     }
-    let output_dir = PathBuf::from(first);
+    let (mode, output_arg) = if first == "--pages" {
+        let Some(output_arg) = args.next() else {
+            return Err(io::Error::other(USAGE).into());
+        };
+        if output_arg == "--help" || output_arg == "-h" {
+            println!("{USAGE}");
+            return Ok(());
+        }
+        (CaptureMode::Pages, output_arg)
+    } else {
+        (CaptureMode::Stitched, first)
+    };
+    if output_arg.starts_with('-') {
+        return Err(io::Error::other(USAGE).into());
+    }
+    let output_dir = PathBuf::from(output_arg);
     let rest: Vec<_> = args.collect();
     let bounds = match rest.as_slice() {
         [] => WindowBounds { x: 0, y: 0, width: 100, height: 100, scale_factor: 1.0 },
@@ -64,19 +81,32 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     })?;
 
-    eprintln!("Starting in 10 seconds. Switch to the long page in your browser; type `stop` in this terminal to request a partial capture.");
+    match mode {
+        CaptureMode::Stitched => {
+            eprintln!("Starting in 10 seconds. Switch to the long page in your browser; type `stop` in this terminal to request a partial capture.")
+        }
+        CaptureMode::Pages => eprintln!(
+            "Starting in 10 seconds. Focus the browser page; PageDown advances without clicking. Type `stop` in this terminal to save captured pages."
+        ),
+    }
     thread::sleep(Duration::from_secs(10));
-    let encoded = capture_to_base64(bounds, Some("jpeg".into()), Some(80), &stop)?;
-    let jpeg = STANDARD.decode(encoded.as_bytes())?;
-    let image = image::load_from_memory(&jpeg)?;
-    let jpeg_path = output_dir.join("capture.jpg");
-    let base64_path = output_dir.join("capture.base64");
-    let mut jpeg_file = File::create_new(&jpeg_path)?;
-    jpeg_file.write_all(&jpeg)?;
-    let mut base64_file = File::create_new(&base64_path)?;
-    base64_file.write_all(encoded.as_bytes())?;
-    println!("JPEG: {}", jpeg_path.display());
-    println!("Base64: {}", base64_path.display());
-    println!("Dimensions: {}x{}; JPEG bytes: {}", image.width(), image.height(), jpeg.len());
+    let encoded_images = capture_to_base64(bounds, Some("jpeg".into()), Some(80), &stop, mode)?;
+    for (index, encoded) in encoded_images.into_iter().enumerate() {
+        let jpeg = STANDARD.decode(encoded.as_bytes())?;
+        let image = image::load_from_memory(&jpeg)?;
+        let (jpeg_name, base64_name) = match mode {
+            CaptureMode::Stitched => ("capture.jpg".to_owned(), "capture.base64".to_owned()),
+            CaptureMode::Pages => (format!("page-{:04}.jpg", index + 1), format!("page-{:04}.base64", index + 1)),
+        };
+        let jpeg_path = output_dir.join(jpeg_name);
+        let base64_path = output_dir.join(base64_name);
+        let mut jpeg_file = File::create_new(&jpeg_path)?;
+        jpeg_file.write_all(&jpeg)?;
+        let mut base64_file = File::create_new(&base64_path)?;
+        base64_file.write_all(encoded.as_bytes())?;
+        println!("JPEG: {}", jpeg_path.display());
+        println!("Base64: {}", base64_path.display());
+        println!("Dimensions: {}x{}; JPEG bytes: {}", image.width(), image.height(), jpeg.len());
+    }
     Ok(())
 }
