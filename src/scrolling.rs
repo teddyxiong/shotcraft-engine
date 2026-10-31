@@ -36,6 +36,8 @@ pub struct WindowBounds {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CaptureMode {
+    /// Capture the selected display once without moving the pointer or sending input.
+    Single,
     /// Stitch the scrolling content into one image, rejecting unmatched frames.
     Stitched,
     /// Return each changed full-screen frame separately; PageDown advances the application.
@@ -83,7 +85,8 @@ fn pointer_coordinate(value: f64) -> Result<i32> {
 }
 
 /// Capture a scrolling page on the display that best overlaps `bounds`, then return one stitched
-/// image or individual pages as plain Base64 strings. Stitched mode moves the pointer to the
+/// image or individual pages as plain Base64 strings. Single mode captures once without input.
+/// Stitched mode moves the pointer to the
 /// display center and uses wheel scrolling; Pages mode sends PageDown to the focused application,
 /// which the caller must focus beforehand. The caller must hide its own windows when needed and
 /// grant the required screen-recording and input permissions. Set `stop` with `Ordering::Relaxed`
@@ -138,6 +141,9 @@ pub fn capture_to_base64(bounds: WindowBounds, format: Option<String>, quality: 
     if first.width() == 0 || first.height() == 0 {
         return Err(Error::Other("selected display returned an empty capture".into()));
     }
+    if mode == CaptureMode::Single {
+        return Ok(vec![encode_image_to_base64(&first, format, quality)?]);
+    }
     let monitor = if stop.load(Ordering::Relaxed) { None } else { Some(capture::Monitor::by_id(monitor_id).ok_or(Error::MonitorGone(monitor_id))?) };
     let mut enigo = None;
     let images = collect_frames(
@@ -157,6 +163,7 @@ pub fn capture_to_base64(bounds: WindowBounds, format: Option<String>, quality: 
             }
             let controller = enigo.as_mut().ok_or_else(|| Error::Other("pointer controller was not initialized".into()))?;
             match mode {
+                CaptureMode::Single => return Ok(false),
                 CaptureMode::Stitched => {
                     let center = center.ok_or_else(|| Error::Other("stitched scrolling pointer center is unavailable".into()))?;
                     controller.move_mouse(center.0, center.1, Coordinate::Abs).map_err(|error| {
@@ -207,6 +214,7 @@ fn collect_frames(
             }
         };
         match mode {
+            CaptureMode::Single => return Err(Error::Other("single capture does not collect scrolling frames".into())),
             CaptureMode::Stitched => {
                 let result = stitcher.as_mut().ok_or_else(|| Error::Other("stitcher was not initialized".into()))?.push(frame);
                 match result {
@@ -263,7 +271,7 @@ fn collect_frames(
             Ok(vec![encode(&image)?])
         }
         CaptureMode::Pages if pages.is_empty() => Err(Error::Other("scrolling capture produced no pages".into())),
-        CaptureMode::Pages => Ok(pages),
+        CaptureMode::Single | CaptureMode::Pages => Ok(pages),
     }
 }
 

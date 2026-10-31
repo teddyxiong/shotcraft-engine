@@ -14,10 +14,10 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use shotcraft_engine::scrolling::{CaptureMode, WindowBounds, capture_to_base64};
 
-const USAGE: &str = "Usage: scroll_capture [--pages] <new-output-directory> [x y width height scale_factor]\n\
+const USAGE: &str = "Usage: scroll_capture [--single | --pages] <new-output-directory> [x y width height scale_factor]\n\
 Bounds are physical outer-window coordinates; scale_factor is required for macOS mixed-DPI display selection.\n\
 Without geometry, selects the display containing the desktop origin using bounds (0, 0, 100, 100).\n\
-Default mode stitches scrolling content; --pages saves each distinct full-screen frame and advances with PageDown.\n\
+Default mode stitches scrolling content; --single captures once without input; --pages saves each distinct full-screen frame and advances with PageDown.\n\
 In --pages mode, focus the browser page yourself; PageDown behavior depends on the application.\n\
 During capture, enter exactly `stop` on stdin to request a partial result.";
 
@@ -30,7 +30,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         println!("{USAGE}");
         return Ok(());
     }
-    let (mode, output_arg) = if first == "--pages" {
+    let (mode, output_arg) = if first == "--single" || first == "--pages" {
         let Some(output_arg) = args.next() else {
             return Err(io::Error::other(USAGE).into());
         };
@@ -38,7 +38,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             println!("{USAGE}");
             return Ok(());
         }
-        (CaptureMode::Pages, output_arg)
+        (if first == "--single" { CaptureMode::Single } else { CaptureMode::Pages }, output_arg)
     } else {
         (CaptureMode::Stitched, first)
     };
@@ -82,6 +82,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     })?;
 
     match mode {
+        CaptureMode::Single => eprintln!("Starting in 10 seconds. Show the screen to capture; no scrolling or input will be sent."),
         CaptureMode::Stitched => {
             eprintln!("Starting in 10 seconds. Switch to the long page in your browser; type `stop` in this terminal to request a partial capture.")
         }
@@ -95,7 +96,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let jpeg = STANDARD.decode(encoded.as_bytes())?;
         let image = image::load_from_memory(&jpeg)?;
         let (jpeg_name, base64_name) = match mode {
-            CaptureMode::Stitched => ("capture.jpg".to_owned(), "capture.base64".to_owned()),
+            CaptureMode::Single | CaptureMode::Stitched => ("capture.jpg".to_owned(), "capture.base64".to_owned()),
             CaptureMode::Pages => (format!("page-{:04}.jpg", index + 1), format!("page-{:04}.base64", index + 1)),
         };
         let jpeg_path = output_dir.join(jpeg_name);

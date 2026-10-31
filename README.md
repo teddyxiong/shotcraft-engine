@@ -1,171 +1,149 @@
 # ShotCraft Engine
 
-一个可被其他 Rust 软件直接调用的全屏滚动截屏组件，同时提供命令行程序 `scroll_capture`。
-保留选屏、连续采集、向下拼接、逐页截图、JPEG/PNG 编码、Base64 输出和中途停止。
-截图核心不创建窗口、不写文件、不操作剪贴板；命令行程序负责将结果保存到指定目录。
+[English](README.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · [Français](README.fr.md)
 
-## 编译
+## 1. Features
 
-需要 Rust 1.95 或更新版本。
+A Rust component for full-display capture, with a standalone `scroll_capture` CLI.
 
-- macOS：安装 Xcode Command Line Tools。
-- Windows x64：使用 Rust MSVC 工具链，并安装 Visual Studio C++ Build Tools。
-- Ubuntu：使用 24.04 构建，安装以下开发包：
+| Mode | Input sent | Result |
+| --- | --- | --- |
+| Default / `CaptureMode::Stitched` | Move the pointer to the selected display center and scroll down | One stitched image |
+| `--single` / `CaptureMode::Single` | None | One capture of the current display contents |
+| `--pages` / `CaptureMode::Pages` | PageDown | Separate full-display images, in capture order |
 
-```sh
-sudo apt-get update
-sudo apt-get install -y build-essential pkg-config libclang-dev libxcb1-dev libgbm-dev libegl-dev libpipewire-0.3-dev libspa-0.2-dev libwayland-dev
+Display selection uses the caller's window bounds. The library returns JPEG or PNG as Base64 without resizing; it creates no windows, writes no files and does not change the clipboard. The CLI saves the results to disk. Cooperative stopping preserves captured content. Single mode has been verified on a real desktop; this does not establish validation on every platform.
+
+## 2. Detailed usage
+
+### Syntax and parameters
+
+```text
+scroll_capture [--single | --pages] <new-output-directory> [x y width height scale_factor]
+scroll_capture --help
+scroll_capture -h
 ```
 
-在仓库根目录编译：
+| Parameter | Accepted values | Default / requirement |
+| --- | --- | --- |
+| `--single` | Flag before the output directory; cannot be combined with `--pages` | Omitted: stitched mode |
+| `--pages` | Flag before the output directory; cannot be combined with `--single` | Omitted: stitched mode |
+| `new-output-directory` | Path to a directory that does not exist; its parent must exist. Quote paths with spaces | Required; no overwrite |
+| `x`, `y` | Signed `i32` integers, −2,147,483,648 to 2,147,483,647; physical outer-window coordinates | `0`, `0` |
+| `width`, `height` | `u32` integers, 1 to 4,294,967,295; physical outer-window dimensions | `100`, `100` |
+| `scale_factor` | Finite positive `f64`; the caller window's scale, used for macOS coordinate conversion | `1.0` |
+| `--help`, `-h` | Alone, or immediately after `--single` / `--pages` | Print help without capturing or creating a directory |
 
-```sh
-cargo build --release --locked
-```
+Supply all five geometry values in order, or omit all five. They select a display, not a crop region: choose the display with the largest overlap, or the nearest display center if none overlaps. Without geometry, bounds `(0, 0, 100, 100, 1.0)` select near the desktop origin, usually the primary display. The CLI does not discover the terminal's or Pluely14's window automatically. A directory name starting with `-` must use a path such as `./--name`.
 
-生成的命令行程序：
+The CLI always uses **JPEG quality 80** and a **10-second preparation delay**. There are no `--format`, `--quality` or `--delay` options. Use the Rust API to choose encoding.
 
-- macOS / Ubuntu：`target/release/scroll_capture`
-- Windows：`target/release/scroll_capture.exe`
+### Commands
 
-只检查 Rust 库可使用 `cargo check --lib --locked`。日常检查：
-
-```sh
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo test --workspace --locked
-```
-
-## 命令行启动
-
-macOS / Ubuntu：
+macOS / Ubuntu, after building:
 
 ```sh
 ./target/release/scroll_capture ./capture-01
-```
-
-Windows PowerShell：
-
-```powershell
-.\target\release\scroll_capture.exe .\capture-01
-```
-
-也可直接通过 Cargo 启动：
-
-```sh
-cargo run --release --locked --bin scroll_capture -- ./capture-01
-```
-
-输出目录必须尚不存在。启动后有 10 秒准备时间，请切到浏览器长页面顶部。
-默认选取桌面原点附近的屏幕，自动向下滚动，结束后输出：
-
-- `capture.jpg`：JPEG，质量 80，保持拼接结果的像素尺寸。
-- `capture.base64`：对应 JPEG 的标准 Base64，不含 data URI 前缀。
-
-中途在启动终端输入 `stop` 并回车，会停止后续采集和滚动，保存已经拼接的部分。
-`Ctrl+C` 会终止进程，无法保证保存结果。首次采集前就收到 `stop` 时返回错误，不生成图片。
-切回终端可能改变目标画面，停止测试时也应检查图片末尾是否混入终端内容。
-
-指定用于选屏的模拟客户端窗口外框：
-
-```text
-scroll_capture <新输出目录> <x> <y> <width> <height> <scale_factor>
-```
-
-坐标和尺寸使用物理像素；macOS 的 `scale_factor` 使用调用方窗口自身的缩放比例。
-例如 Retina 主屏：
-
-```sh
-./target/release/scroll_capture ./capture-retina-01 200 200 800 600 2
-```
-
-`scroll_capture --help` 仅显示用法，不开始采集。
-
-## 按 PageDown 逐张保存
-
-增加前置参数 `--pages`，切换为分页模式：
-
-```sh
+./target/release/scroll_capture --single ./single-01
 ./target/release/scroll_capture --pages ./pages-01
 ```
 
-Windows PowerShell：
+Windows PowerShell:
 
 ```powershell
+.\target\release\scroll_capture.exe .\capture-01
+.\target\release\scroll_capture.exe --single .\single-01
 .\target\release\scroll_capture.exe --pages .\pages-01
 ```
 
-也可指定目标屏幕对应的模拟窗口外框，例如：
+With Cargo, place program arguments after `--`. The second example specifies physical window bounds on a Retina display:
 
 ```sh
+cargo run --release --locked --bin scroll_capture -- --single ./single-01
 ./target/release/scroll_capture --pages ./pages-retina-01 200 200 800 600 2
 ```
 
-程序读取所选屏幕的实际截图尺寸，先截取第一屏，随后每次发送一次 PageDown，等待 350 ms 后再采集。
-每张图片保留该次完整屏幕的像素尺寸，不缩放、不拼接。翻页距离由应用的 PageDown 行为决定，
-不以显示器像素高度直接换算滚轮次数；相邻图片允许有重叠。
+Use a different new directory for each command. During preparation, show the target screen; for scrolling capture, start at the desired page position. Single mode captures the current view and never scrolls back to the top.
 
-10 秒准备时间内，请让目标网页正文获得键盘焦点，并确保它位于所选屏幕。
-分页模式只发送 PageDown，不移动鼠标、不点击或抢占焦点；地址栏、编辑框或嵌套滚动区域
-持有焦点时，PageDown 可能不会翻动目标页面。应用滚动动画及异步加载需在真实桌面测试。
-切回终端手动停止也可能将终端截为下一张；客户端可通过停止标记结束采集，保持目标页面的焦点。
+Pages mode captures first, then sends one PageDown and waits 350 ms before each subsequent capture. Focus the intended page body on the selected display yourself. It does not move the pointer, click or claim focus. PageDown follows the focused application's behavior, not an exact display-height displacement; overlap is expected. Address bars, editors and nested scrolling areas can receive the key instead.
 
-采集正常结束或收到 `stop` 后，CLI 按采集顺序分别保存：
+### Files and stopping
 
-```text
-page-0001.jpg
-page-0001.base64
-page-0002.jpg
-page-0002.base64
-...
-```
+| Mode | Output files |
+| --- | --- |
+| Stitched / Single | `capture.jpg`, `capture.base64` |
+| Pages | `page-0001.jpg`, `page-0001.base64`, `page-0002.jpg`, `page-0002.base64`, … |
 
-JPEG 质量仍为 80，Base64 对应各自的 JPEG；未带 `--pages` 时仍输出 `capture.jpg` 和 `capture.base64`。
-库在过程中保留已编码的图片列表，CLI 在函数返回后写文件，因此强行结束进程不能保证保存已有页面。
+Each `.base64` file contains standard Base64 for its JPEG, without a data URI prefix. Full-display images retain capture dimensions; stitched images retain the resulting stitched dimensions. No resizing occurs.
 
-分页模式最多尝试采集 50 帧，跳过像素完全相同的连续帧，连续 3 帧完全不变时结束；
-每张独立图片不受拼接长图 40,000 像素高度限制。视频、动画或系统状态变化可能使画面始终不同，
-此时可主动 `stop` 或等待达到次数上限；当前不做相似度去重。
+Enter exactly `stop` followed by Enter on stdin to stop further scrolling and return captured content. It is lowercase with no surrounding spaces. Before the first frame, a stop returns an error without an image. Single mode preserves a frame already captured. Switching to the terminal may contaminate captures; a host can send `stop
+` through a pipe without changing focus.
 
-## 被其他 Rust 软件调用
+Files are written only after capture returns, not after each frame. `Ctrl+C` or forced termination may lose all unsaved results. A normal capture error generally does not save earlier frames; a write error may leave partial files. Exit code 0 means successful completion; failures return a nonzero code. stdout lists paths, dimensions and JPEG byte counts, not raw Base64. Directory existence alone does not indicate success.
 
-在调用方的 `Cargo.toml` 添加依赖。本地开发示例：
+## 3. Integration with other software
+
+### Rust dependency and API
+
+Use a local checkout (adjust the path):
 
 ```toml
 [dependencies]
 shotcraft-engine = { path = "../shotcraft-engine" }
 ```
 
-也可从此仓库引用；私有仓库需要构建环境已有正常的 Git 访问权限：
+Or use Git; private repositories require Git access in the build environment:
 
 ```toml
 [dependencies]
 shotcraft-engine = { git = "https://github.com/teddyxiong/shotcraft-engine.git", branch = "main" }
 ```
 
-主要接口位于 `shotcraft_engine::scrolling`：
+The library is compiled into the host through Cargo; it is not a ready-made C ABI DLL or HTTP service. Public entry points are in `shotcraft_engine::scrolling`:
+
+```rust,ignore
+pub fn capture_to_base64(
+    bounds: WindowBounds,
+    format: Option<String>,
+    quality: Option<u8>,
+    stop: &std::sync::atomic::AtomicBool,
+    mode: CaptureMode,
+) -> shotcraft_engine::Result<Vec<String>>;
+
+pub fn encode_image_to_base64(
+    image: &image::RgbaImage,
+    format: Option<String>,
+    quality: Option<u8>,
+) -> shotcraft_engine::Result<String>;
+```
+
+| API parameter | Values and behavior |
+| --- | --- |
+| `bounds: WindowBounds` | Required fields: `x: i32`, `y: i32`, `width: u32`, `height: u32`, `scale_factor: f64`. Same units, valid ranges and display-selection rules as the CLI; no library default |
+| `format: Option<String>` | Exactly lowercase `Some("jpg".into())` or `Some("jpeg".into())` selects JPEG; `None`, `"png"` and every other string select PNG. Case-sensitive |
+| `quality: Option<u8>` | Input 0–255; `None` means 80; clamp to 1–100 for JPEG. Ignored for PNG. JPEG composites transparency over white |
+| `stop: &AtomicBool` | Required; initialize to `false`, set to `true` from another thread/event handler to stop cooperatively |
+| `mode: CaptureMode` | Required: `Single`, `Stitched` or `Pages`; no default |
+| `image: &image::RgbaImage` | Encoder only: an existing RGBA image; no capture or input |
+
+Example: capture one screen on a worker thread. Replace the sample bounds with the host's physical outer position/size and its own scale factor (for example, Tauri `outer_position`, `outer_size`, `scale_factor`):
 
 ```rust
 use shotcraft_engine::scrolling::{CaptureMode, WindowBounds, capture_to_base64};
 use std::sync::{Arc, atomic::AtomicBool};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // 实际应用中，从自己的客户端窗口读取物理外框和窗口缩放比例。
     let bounds = WindowBounds {
-        x: 200,
-        y: 200,
-        width: 800,
-        height: 600,
-        scale_factor: 2.0,
+        x: 200, y: 200, width: 800, height: 600, scale_factor: 2.0,
     };
     let stop = Arc::new(AtomicBool::new(false));
     let worker_stop = Arc::clone(&stop);
     let task = std::thread::spawn(move || {
-        capture_to_base64(bounds, Some("jpeg".into()), Some(80), &worker_stop, CaptureMode::Stitched)
+        capture_to_base64(
+            bounds, Some("jpeg".into()), Some(80), &worker_stop,
+            CaptureMode::Single,
+        )
     });
-
-    // 将 stop 保留在应用状态中，供其他事件处理函数发送停止信号。
-    // 此命令行示例只等待结果；UI 软件不要在事件线程上同步 join。
     let images = task.join()
         .map_err(|_| std::io::Error::other("capture worker panicked"))??;
     println!("Captured images: {}", images.len());
@@ -173,134 +151,143 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-采集入口新增最后一个 `CaptureMode` 参数，返回值统一为 `Result<Vec<String>>`：
+Choose `CaptureMode::Stitched` for one long image, or `CaptureMode::Pages` for separate pages. Both `Single` and `Stitched` return a list of length 1; `Pages` returns one string per accepted page. Successful results are nonempty and returned together when the call completes, not through per-frame callbacks.
 
-- `CaptureMode::Stitched`：返回一张拼接长图的 Base64，列表长度为 1。
-- `CaptureMode::Pages`：返回按采集顺序排列的独立页面 Base64 列表，不进行拼接。
+This API blocks and has no 10-second CLI delay. Use a worker thread or a host's `spawn_blocking`; never synchronously join on the UI event thread. The host owns window visibility, focus, permissions and shortcut registration. The library has no Tauri dependency or built-in global stop shortcut.
 
-调用分页模式时，将上例的 `CaptureMode::Stitched` 改为 `CaptureMode::Pages`。
-调用方按列表逐张使用图片；已有图片的 `encode_image_to_base64` 接口仍返回单个 `String`。
+Keep the `Arc<AtomicBool>` in application state. In the stop command or shortcut handler:
 
-控制侧收到停止指令或快捷键后，在其事件处理函数中执行：
-
-```rust
+```rust,ignore
 stop.store(true, std::sync::atomic::Ordering::Relaxed);
 ```
 
-停止信号应为每次采集新建，不在同一任务运行期间复位。已有帧时正常返回部分图像；
-尚无首帧时返回停止错误。无法撤销已经发出的系统事件，也不会强行中断正在执行的截图、
-拼接或剩余 350 ms 等待；收尾编码完成后才返回 Base64。
+Create a new flag for each task; do not reset it during a capture. A stop preserves committed images. In-flight capture, stitching, encoding and the remaining 350 ms wait cannot be forcibly interrupted, and already-issued input cannot be undone. Single mode skips that wait, all input, the continuous capture backend and the stitcher.
 
-采集函数是同步阻塞函数。Tauri 等异步客户端应放在 `spawn_blocking` 中调用，
-同时在客户端自己的状态中保留停止标记；本库没有 Tauri 依赖。
-调用方继续负责自己的窗口可见性、全局快捷键和系统权限。
+For an existing image, encode directly:
 
-如果已有 `image::RgbaImage`，可直接编码，不重新截屏：
-
-```rust
+```rust,ignore
 let base64 = shotcraft_engine::scrolling::encode_image_to_base64(
-    &image,
-    Some("jpeg".into()),
-    Some(80),
+    &image, Some("jpeg".into()), Some(80),
 )?;
 ```
 
-`jpg` / `jpeg` 使用 JPEG，质量默认 80、限制为 1–100，透明像素合成白底。
-`png` 或其他格式参数（包括 `None`）使用 PNG。每张图片均编码为不带前缀的 Base64 字符串。
-不缩放图片；拼接模式完成拼接后编码一次，分页模式对每张完整截图分别编码。
+Base64 decoding yields the selected image format's bytes. Pass strings directly if the receiver expects plain Base64, or prepend `data:image/jpeg;base64,` / `data:image/png;base64,` if required. For Pages, pass images individually in list order; concatenating Base64 strings does not form one image. The library does not upload to AI services or Pluely14.
 
-## 只截第一屏：待实现方案
+### CLI as a subprocess
 
-当前公开接口和 CLI 尚未提供单屏模式。现有流程已经先截取第一帧，再初始化鼠标控制器并发送滚轮事件，
-因此可以用一个小开关扩展，不需要另写一套截图实现。
+Bundle the CLI executable for the target OS/architecture and the required license files. Launch it with the arguments above and a fresh output directory; keep stdin piped. To stop, write and flush `stop
+`; closing stdin alone does not stop capture. Wait for exit code 0 before reading `.jpg` / `.base64` files. The CLI is an executable, while direct Rust integration uses the source dependency above.
 
-当前模式参数已包含 `Stitched`、`Pages`。后续单屏能力可在同一参数中增加 `Single`，
-无需再增加独立的 `scroll_enabled` 开关：完成选屏和首帧采集、校验后，直接编码并返回长度为 1 的列表。
-在创建连续采集后端和输入控制器之前返回，跳过输入事件、帧间等待及拼接循环。
+## 4. Platforms and boundaries
 
-CLI 拟增加 `--single`，默认仍执行滚动截图。**该参数尚未实现，当前不能使用。**
-单屏结果沿用现有输出格式、质量、原始尺寸及文件保存规则。
+### Current behavior and limits
 
-单屏模式不通过预置 `stop=true` 实现：当前首帧前收到停止信号会返回错误，
-靠启动后立即发送停止指令也无法可靠保证只采集一帧。新增模式仍应保留原来的停止语义。
-验收时需确认只采集一次、不创建鼠标控制器、不移动鼠标或滚动，输出尺寸与首帧一致。
+- Stitched: at most 50 capture attempts or 40,000 pixels in height. Three consecutive unchanged frames end capture; three consecutive unmatched frames return an error. Hitting a limit returns the captured portion, not a guarantee of reaching the bottom. Input uses 3 vertical wheel units per step, then a 350 ms wait.
+- Pages: at most 50 capture attempts; consecutive exactly identical RGBA frames are skipped, and three unchanged frames end capture. No similarity-based deduplication, no stitching requirement and no 40,000-pixel stitched-height limit. Animation, video or system status changes may prevent bottom detection; use `stop` or the attempt limit.
+- Single: exactly one capture, without input or stitching. Screen-capture authorization is still required. This does not by itself establish native Wayland support.
+- When a subsequent capture/input error coincides with a stop, committed content takes priority. A screenshot component without its own windows still captures other visible content; scrolling modes visibly change the desktop.
+- macOS: the invoking process needs screen-recording permission and, for scrolling modes, the permissions required for automated input.
+- Windows: the standalone CLI initializes DPI awareness; the library does not change the host's process DPI state. Stitched pointer positioning uses Enigo's primary-display normalization, so secondary-display wheel scrolling is known to be unreliable. Validate on the primary display first. Pages sends keys to the focused app; secondary-display behavior still requires desktop testing.
+- Ubuntu: current scrolling input uses X11. Check `echo "$XDG_SESSION_TYPE"`; native Wayland scrolling is not adapted. Builds target Ubuntu 24.04. A 22.04 container `--help` check verifies startup only, not desktop capture.
 
-单屏模式仍需要屏幕采集授权，但无需执行自动滚动所需的输入控制。
-它本身不会补齐下文的原生 Wayland 适配。
-
-## 平台与当前边界
-
-- 拼接模式最多采集 50 帧或高 40,000 像素；连续 3 帧完全不变也会结束。
-  达到上限返回已采集部分，不保证任意长度页面都到达底部。
-- 拼接模式连续 3 帧无法可靠拼接时返回错误；分页模式不要求相邻图片能匹配。
-  停止与当前采集/翻页报错同时发生时优先返回已有结果。
-- 拼接模式会移动鼠标并发送滚轮事件；分页模式发送 PageDown。两种模式均会改变页面，
-  无截图窗口不代表桌面画面静止。
-- macOS：依赖调用进程已有的屏幕录制及自动滚动所需权限。
-- Windows：独立 CLI 初始化 DPI awareness；库不改变宿主的进程级 DPI 设置。
-  拼接模式使用的 Enigo 绝对鼠标定位按主屏归一化，副屏滚轮操作已知不可靠，先在主屏验收。
-  分页模式只发送键盘事件，需确保焦点和目标屏幕一致；副屏效果仍需实机验收。
-- Ubuntu：当前自动滚动使用 X11 后端，原生 Wayland 尚未适配。
-  在 X11 桌面运行可用 `echo "$XDG_SESSION_TYPE"` 确认会话。
-- Ubuntu 24.04 用于构建。工作流额外在 22.04 容器运行 `--help` 验证启动兼容；
-  容器启动成功不能代替真实桌面截图测试。运行库：
+Ubuntu runtime libraries:
 
 ```sh
 sudo apt-get install -y libpipewire-0.3-0 libxcb1 libgbm1 libegl1 libx11-6 libwayland-client0
 ```
 
-## 原生 Wayland：适配条件与当前状态
+### Native Wayland: requirements and current status
 
-本项目尚未完成原生 Wayland 的滚动截图适配。当前锁定的 xcap 有 Wayland 单次截图路径，
-但本项目没有维护持续的 Portal/PipeWire 采集会话；Enigo 当前仅启用默认 X11 输入后端。
-安装 Wayland 开发包、编译成功或单次截图成功，都不能证明原生 Wayland 自动滚动已可用。
+The locked xcap version has single-capture Wayland paths, but this component has no persistent Portal/PipeWire capture session. Enigo currently uses its default X11 input backend. Installing headers, compiling successfully or obtaining one screenshot does not prove native Wayland scrolling support.
 
-适配需要分别满足屏幕采集与输入控制条件：
-
-| 条件 | 用途 |
+| Required capability | Purpose |
 | --- | --- |
-| 实际 Wayland 桌面会话、可用的用户会话 D-Bus | 与桌面服务通信并在真实环境验证 |
-| xdg-desktop-portal 及匹配桌面的后端 | 由 GNOME、KDE 等桌面实际提供所需接口 |
-| ScreenCast Portal 与 PipeWire | 在授权会话中持续读取所选屏幕的帧 |
-| RemoteDesktop Portal 的输入控制能力 | 拼接模式需指针/滚轮输入，分页模式需键盘 PageDown；通过受支持的接口或 libei/EIS 路径发送 |
-| 用户授予屏幕及所用输入设备的访问权限 | 指针和键盘权限需按模式确认；只获屏幕授权不能代替输入授权 |
+| Real Wayland desktop and user-session D-Bus | Communicate with desktop services and test actual behavior |
+| xdg-desktop-portal and a matching desktop backend | GNOME/KDE/etc. must implement the needed interfaces |
+| ScreenCast Portal and PipeWire | Continuous frames of the selected display in an authorized session |
+| RemoteDesktop Portal input | Pointer/wheel for Stitched, PageDown keyboard input for Pages, through supported methods or libei/EIS |
+| Screen and relevant input-device authorization | Screen permission alone does not authorize pointer or keyboard input |
 
-最小适配方向是建立并复用一次授权会话，持续取帧并发送滚动事件，再接入现有拼接、编码和停止逻辑。
-需验证所选输入后端与桌面提供的接口相匹配；只启用一个 Enigo feature 不等于整条流程已适配。
-屏幕流的位置、尺寸与缩放还需对应到目标显示器，不能直接假定合成器坐标就是物理像素，
-也不能保证原来的窗口外框重叠选屏方法在原生 Wayland 上直接成立。
+The adaptation direction is to reuse one authorized capture/input session, map stream position, size and scale to the target display, then reuse stitching, encoding and stopping. Enabling one Enigo feature alone is insufficient. Compositor coordinates cannot simply be assumed to be physical pixels; the existing window-overlap selection also needs validation.
 
-组件可以继续不创建截图面板或预览，但标准 Portal 流程通常会显示系统授权、选屏界面。
-支持持久化的桌面可通过 `persist_mode`、`restore_token` 减少重复授权；令牌需要按规范更新，
-权限撤销、屏幕变化或会话恢复失败时仍可能重新提示。因此不能统一承诺首次也无弹窗，或永久无系统提示。
+The component can avoid its own capture panels, but standard Portal flows usually show system authorization/display selection. Where supported, `persist_mode` and `restore_token` reduce repeated prompts; tokens must be updated and revocation, display changes or failed restoration can prompt again. No universal guarantee of silent first use or permanently prompt-free operation is possible.
 
-若需切到浏览器后用全局快捷键停止，还要确认桌面支持 GlobalShortcuts Portal 并由宿主绑定；
-现有停止标记可以复用。建议先以 Ubuntu 24.04 + GNOME Wayland 验证持续取帧、自动滚动、拼接和中途停止，
-再分别验证 KDE 等环境，不能只按 Ubuntu 版本判定支持。
+For global shortcut stopping, the host must also verify and bind desktop GlobalShortcuts Portal support. Validate continuous frames, input, stitching and partial stopping on Ubuntu 24.04 + GNOME Wayland first, then other desktops such as KDE; Ubuntu version alone is not a compatibility criterion. Single mode uses the existing screenshot backend and remains dependent on the desktop's capture/authorization behavior.
 
-参考：[ScreenCast](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.ScreenCast.html)、
-[RemoteDesktop](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.RemoteDesktop.html)、
-[GlobalShortcuts](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.GlobalShortcuts.html)。
+Portal references: [ScreenCast](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.ScreenCast.html) · [RemoteDesktop](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.RemoteDesktop.html) · [GlobalShortcuts](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.GlobalShortcuts.html)
 
-## GitHub Actions 手动编译
+## 5. Building locally and on GitHub
 
-仓库只保留 **Engine native builds**，触发入口仅为 `workflow_dispatch`。
-提交、推送、PR、标签和定时任务均不会启动编译。
+### Local prerequisites
 
-打开 [Actions](https://github.com/teddyxiong/shotcraft-engine/actions/workflows/engine-build.yml)，
-选择 **Run workflow**，选择分支后再次点击 **Run workflow**。
-四个原生目标分别输出 `scroll-capture-macos-arm64`、`scroll-capture-macos-x64`、
-`scroll-capture-windows-x64`、`scroll-capture-ubuntu-x64` Artifact，保留 14 天。
+Install **Rust 1.95 or newer** with Cargo. Obtain the source and check the active toolchain:
 
-解压对应 Artifact 后，在解压目录使用 `./scroll_capture ./capture-01`，
-Windows 使用 `.\scroll_capture.exe .\capture-01`；macOS/Ubuntu 必要时先 `chmod +x ./scroll_capture`。
-每次测试换一个新目录，分别检查完整采集与中途 `stop` 的图片是否连续、无明显缺行或重复。
-CI 中的编译、单元测试和 `--help` 不代表真实桌面验收已通过。
+```sh
+git clone https://github.com/teddyxiong/shotcraft-engine.git
+cd shotcraft-engine
+rustc --version
+cargo --version
+```
 
-## 源码与许可
+If installed through rustup, `rustup update stable` updates the stable toolchain. Private-repository authentication must already be configured.
 
-源码集中在 `src/capture.rs`、`src/stitch.rs`、`src/scrolling.rs` 和 `src/bin/scroll_capture.rs`。
-原应用的 UI、OCR、编辑器、托盘、字体资源和历史文档已移出构建，留在被 Git 忽略的本地 `backups/`。
+| Platform | Build requirements |
+| --- | --- |
+| macOS | Xcode Command Line Tools (`xcode-select --install`) and a native Rust toolchain |
+| Windows x64 | Visual Studio C++ Build Tools, Windows SDK and the `x86_64-pc-windows-msvc` Rust toolchain; build from a configured developer terminal |
+| Ubuntu 24.04 x64 | Rust and the development packages below |
 
-采用 MIT OR Apache-2.0，保留上游 ShotCraft 版权与许可声明。
-来源说明见 `ATTRIBUTION.md`，依赖许可见生成的 `THIRD-PARTY-LICENSES.md`。
+```sh
+sudo apt-get update
+sudo apt-get install -y build-essential pkg-config libclang-dev libxcb1-dev libgbm-dev libegl-dev libpipewire-0.3-dev libspa-0.2-dev libwayland-dev
+```
+
+From the repository root, build the CLI or check the library:
+
+```sh
+cargo build --release --locked --bin scroll_capture
+cargo check --lib --locked
+```
+
+The native CLI is `target/release/scroll_capture` (macOS/Ubuntu) or `target/release/scroll_capture.exe` (Windows). Cargo builds the library automatically when another Rust project depends on it. If explicitly using `--target <triple>`, output is under `target/<triple>/release/`.
+
+Project checks:
+
+```sh
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
+```
+
+### Manual GitHub Actions builds
+
+Only **Engine native builds**, in [engine-build.yml](.github/workflows/engine-build.yml), is active. Its trigger is `workflow_dispatch`: pushes, PRs, tags and schedules do not trigger builds.
+
+1. Open [Actions](https://github.com/teddyxiong/shotcraft-engine/actions/workflows/engine-build.yml).
+2. Click **Run workflow**, select the branch containing the desired changes, then click **Run workflow** again.
+3. Wait for all four build jobs and download the matching Artifact from the run page. Artifacts are retained for 14 days.
+
+| Platform | Target triple | Artifact |
+| --- | --- | --- |
+| macOS ARM64 | `aarch64-apple-darwin` | `scroll-capture-macos-arm64` |
+| macOS Intel | `x86_64-apple-darwin` | `scroll-capture-macos-x64` |
+| Windows x64 | `x86_64-pc-windows-msvc` | `scroll-capture-windows-x64` |
+| Ubuntu x64 | `x86_64-unknown-linux-gnu` | `scroll-capture-ubuntu-x64` |
+
+Jobs run formatting, Clippy, tests, a release build and `--help`; Ubuntu also runs the 22.04 startup check. Artifacts contain the executable, English README, licenses, attribution, commit and toolchain information. Other README languages are available in the repository.
+
+Extract the matching Artifact. From its directory run `./scroll_capture --single ./single-01` or, on Windows, `.\scroll_capture.exe --single .\single-01`. On macOS/Ubuntu, run `chmod +x ./scroll_capture` first if needed. Use the section 2 arguments for scrolling tests and a new output directory each time. Verify full capture and stopping on a real desktop: CI build/help checks do not establish desktop behavior.
+
+## 6. Source and license
+
+| File | Responsibility |
+| --- | --- |
+| `src/lib.rs` | Library exports and structured errors |
+| `src/capture.rs` | Display capture, including the Linux X11 pixmap path |
+| `src/stitch.rs` | Pixel-based scrolling-frame stitching |
+| `src/scrolling.rs` | Display selection, modes, stopping and Base64 encoding |
+| `src/bin/scroll_capture.rs` | CLI arguments and output files |
+
+This component derives from [ShotCraft](https://github.com/mmartinez/shotcraft), retaining its copyright and **MIT OR Apache-2.0** licensing. See [LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE), [NOTICE](NOTICE), [ATTRIBUTION.md](ATTRIBUTION.md) and generated [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md). Include the applicable license/attribution files when redistributing the component or embedding it in a product; dependencies retain their own licenses.
+
+The original UI, OCR, editor, tray and bundled assets are excluded from the active component. Ignored local `backups/` is recovery material, not included in Git distributions or builds.
