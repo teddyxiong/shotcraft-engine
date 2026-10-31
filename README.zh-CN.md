@@ -4,6 +4,22 @@
 
 ## 1. 功能概要
 
+### 来源与具体改动
+
+**ShotCraft Engine 是基于 [mmartinez/shotcraft](https://github.com/mmartinez/shotcraft) 源代码修改、删减而来的衍生项目。** 保留了上游的采集和拼接代码，以及 ShotCraft 贡献者的版权声明。本仓库独立维护，不是上游官方发布版本。
+
+相对于原应用，本项目做了以下改动：
+
+- 将截图组件提取为单个 Rust 库和 CLI；从当前构建中移除 egui 界面、编辑器、OCR、托盘、历史记录、应用设置、上传、MCP 和应用资源。
+- 改写滚动帧匹配，使用纹理块与更大范围的像素验证；保留固定头尾、刷新重叠内容，并以最后成功接纳的帧作为拼接基准。改动参考了 [LiteSnap](https://github.com/HuibingLin/LiteSnap) 的算法思想，不包含其产品代码、二进制或资源，详见 [ATTRIBUTION.md](ATTRIBUTION.md)。
+- 根据宿主窗口的物理外框和缩放比例选择屏幕，处理混合 DPI 坐标；Windows CLI 初始化 DPI awareness。保留的 Linux X11 pixmap 采集路径来自上游。现存平台限制见下文。
+- 提供 JPEG/PNG 转 Base64 接口、Rust 侧 JPEG 质量设置和有序图片列表，便于宿主集成，不创建截图面板、不改剪贴板。
+- 新增 Rust 原子停止标记和 CLI 标准输入 `stop` 指令，停止时保留已有截图内容。
+- 在滚动拼接外增加单屏截图 `--single` 和 PageDown 逐张截图 `--pages`。
+- 将原应用打包改为手动触发的组件编译，覆盖 macOS ARM64/Intel、Windows x64 和 Ubuntu x64，并提供四语言集成文档。
+
+### 截图模式
+
 可被其他 Rust 软件调用的全屏截图组件，同时提供独立命令行程序 `scroll_capture`。
 
 | 模式 | 发送的输入 | 返回结果 |
@@ -282,6 +298,25 @@ cargo test --workspace --locked
 
 ## 6. 源码与许可
 
+### 许可证与使用权限
+
+本次修订随附的、维护者有权许可的原创贡献与修改，采用自定义 [ShotCraft Engine Source-Available License 1.0](LICENSE)。当前修订的整个组件不再统一按 MIT/Apache 提供。英文 `LICENSE` 为正式文本，本节为说明性摘要。
+
+| 使用场景 | 授权要求 |
+| --- | --- |
+| 个人、企业或组织发布的软件，不向用户收取访问、使用或功能费用 | 按 `LICENSE` 免费使用 |
+| 广告、志愿赞助或自愿捐赠支持的免费软件 | 免费，但付费不能成为访问、使用或解锁功能的条件 |
+| 企业或组织自己的内部使用，包括业务运营 | 按 `LICENSE` 免费使用 |
+| 向用户收取购买、订阅、许可、付费档位、功能解锁或托管软件访问费用的软件 | 必须另行取得书面付费商业授权，即使截图功能本身免费 |
+
+该规则适用于库集成和调用集成的 CLI，也适用于修改后的版本。此自定义许可不要求公开宿主应用源码或私有修改。商业授权通过[本仓库 Issue](https://github.com/teddyxiong/shotcraft-engine/issues) 联系维护者，价格和范围另行书面约定；仅咨询或捐赠不等于已获授权。
+
+上游 ShotCraft 部分保留 **MIT OR Apache-2.0** 及版权，依赖保留各自许可。自定义条款只覆盖维护者有权许可的内容，不能撤销独立取得的上游或既有授权。特别是 **`v0.1.1`（`114184a9a7a37928c818b1aa8b804bcf02c869a7`）及更早版本保留原许可**。已经获得有效旧版宽松授权的人，可以继续依据该授权使用相应旧代码，新条款不会强迫已有被许可人付费。
+
+这属于带收费软件限制的**源码可见（source-available）许可**，不是 OSI 认可的开源许可。`v0.1.1` 标签没有移动；仅凭包版本 `0.1.1` 无法判断 main 后续提交的许可，应固定并核对完整提交号。本次不创建新发布标签。
+
+发布修改或衍生版本时，欢迎通过 Issue 告知维护者。通知为自愿请求，不是额外许可条件，也不能代替所需的付费授权。
+
 | 文件 | 职责 |
 | --- | --- |
 | `src/lib.rs` | 库导出和结构化错误 |
@@ -290,6 +325,6 @@ cargo test --workspace --locked
 | `src/scrolling.rs` | 选屏、模式、停止与 Base64 编码 |
 | `src/bin/scroll_capture.rs` | CLI 参数和文件输出 |
 
-组件基于 [ShotCraft](https://github.com/mmartinez/shotcraft) 修改，保留上游版权与 **MIT OR Apache-2.0** 许可。参见 [LICENSE-MIT](LICENSE-MIT)、[LICENSE-APACHE](LICENSE-APACHE)、[NOTICE](NOTICE)、[ATTRIBUTION.md](ATTRIBUTION.md) 和生成的 [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md)。分发组件或集成进产品时携带适用的许可和署名文件；依赖仍遵循各自许可。
+上游署名与许可文本保留在 [LICENSE-MIT](LICENSE-MIT)、[LICENSE-APACHE](LICENSE-APACHE)、[NOTICE](NOTICE) 和 [ATTRIBUTION.md](ATTRIBUTION.md)，依赖许可见生成的 [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md)。分发组件或集成产品时携带 [LICENSE](LICENSE) 及所有适用的上游和依赖声明。本文件不改变原始 ShotCraft 代码的许可。
 
 原应用的 UI、OCR、编辑器、托盘及资源已移出当前组件。被忽略的本地 `backups/` 仅供恢复，不包含在 Git 分发或构建中。

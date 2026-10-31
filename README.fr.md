@@ -4,6 +4,22 @@
 
 ## 1. Fonctionnalités
 
+### Origine et modifications
+
+**ShotCraft Engine est un projet dérivé du code source de [mmartinez/shotcraft](https://github.com/mmartinez/shotcraft), modifié et réduit.** Il conserve du code de capture et d’assemblage ainsi que les mentions de copyright des contributeurs de ShotCraft. Il est maintenu indépendamment et ne constitue pas une publication officielle du projet d’origine.
+
+Par rapport à l’application d’origine, ce projet :
+
+- Extrait la capture dans une seule bibliothèque Rust et une CLI ; retire de la compilation active l’interface egui, l’éditeur, l’OCR, la zone de notification, l’historique, les réglages applicatifs, l’envoi, MCP et les ressources de l’application.
+- Revoit la correspondance des images avec des blocs texturés et une vérification plus large des pixels, conserve les en-têtes et pieds fixes, actualise le chevauchement et garde la dernière image acceptée comme référence d’assemblage. Les idées algorithmiques de [LiteSnap](https://github.com/HuibingLin/LiteSnap) ont inspiré ces changements ; aucun code produit, binaire ou ressource LiteSnap n’est inclus. Voir [ATTRIBUTION.md](ATTRIBUTION.md).
+- Sélectionne l’écran à partir du rectangle physique et de l’échelle de la fenêtre hôte, traite les coordonnées à DPI mixtes et initialise la gestion DPI dans la CLI Windows. Le chemin de capture pixmap X11 Linux conservé provient du projet d’origine. Les limites restantes sont décrites ci-dessous.
+- Fournit des API JPEG/PNG vers Base64, une qualité JPEG configurable en Rust et des listes d’images ordonnées, sans panneau de capture ni modification du presse-papiers.
+- Ajoute l’arrêt coopératif par drapeau atomique Rust et commande `stop` sur stdin, en conservant les captures acquises.
+- Ajoute la capture simple `--single` et les captures PageDown séparées `--pages`, en plus de l’assemblage défilant.
+- Remplace le packaging de l’application par des compilations manuelles du composant pour macOS ARM64/Intel, Windows x64 et Ubuntu x64, avec une documentation d’intégration en quatre langues.
+
+### Modes de capture
+
 Composant Rust de capture d’écran complet, intégrable dans d’autres logiciels, avec un exécutable autonome `scroll_capture`.
 
 | Mode | Entrées envoyées | Résultat |
@@ -282,6 +298,25 @@ Extraire l’Artifact correspondant. Dans son répertoire, lancer `./scroll_capt
 
 ## 6. Sources et licence
 
+### Licence et autorisations
+
+Les contributions et modifications de cette révision que les mainteneurs ont le droit de licencier relèvent de la licence personnalisée [ShotCraft Engine Source-Available License 1.0](LICENSE). Cette révision entière n’est plus proposée globalement sous MIT/Apache. Le texte anglais de `LICENSE` fait foi ; cette section en résume la portée.
+
+| Usage | Autorisation |
+| --- | --- |
+| Logiciel publié par une personne, une entreprise ou une organisation, sans frais d’accès, d’utilisation ou de fonctionnalité pour ses utilisateurs | Gratuit selon `LICENSE` |
+| Logiciel gratuit financé par publicité, parrainage volontaire ou dons facultatifs | Gratuit si aucun paiement n’est requis pour l’accès, l’usage ou les fonctionnalités |
+| Usage interne propre à une organisation, y compris ses activités commerciales | Gratuit selon `LICENSE` |
+| Logiciel facturant achat, abonnement, licence, offre payante, déblocage de fonction ou accès à un logiciel hébergé | Licence commerciale payante écrite distincte obligatoire, même si la capture elle-même est gratuite |
+
+La règle couvre l’intégration de la bibliothèque, l’appel d’une CLI intégrée et les versions modifiées. Cette licence n’exige pas la publication du code de l’application hôte ou des modifications privées. Contacter le mainteneur via une [Issue du dépôt](https://github.com/teddyxiong/shotcraft-engine/issues) pour convenir séparément par écrit du prix et du périmètre. Une demande ou un don seul ne vaut pas autorisation.
+
+Les portions ShotCraft d’origine conservent **MIT OR Apache-2.0** et leurs copyrights ; les dépendances gardent leurs propres licences. Les nouvelles conditions couvrent uniquement ce que les mainteneurs peuvent licencier et n’annulent pas les droits indépendants acquis auprès du projet d’origine ou précédemment. En particulier, **`v0.1.1` au commit `114184a9a7a37928c818b1aa8b804bcf02c869a7` et les versions antérieures gardent leurs conditions initiales**. Un titulaire d’une autorisation permissive antérieure valide peut continuer à utiliser l’ancien code concerné selon celle-ci ; cette modification ne force pas les titulaires existants à payer.
+
+Il s’agit d’une licence **source-available** avec restriction sur les logiciels payants, et non d’une licence open source approuvée par l’OSI. Le tag `v0.1.1` reste inchangé ; le numéro de paquet `0.1.1` seul n’identifie pas les conditions des commits ultérieurs de main. Fixer et examiner le commit exact. Aucun nouveau tag de publication n’est créé.
+
+Si vous publiez des modifications ou un dérivé, une notification par Issue est appréciée. Elle est volontaire, ne constitue pas une condition supplémentaire et ne remplace pas une autorisation payante requise.
+
 | Fichier | Responsabilité |
 | --- | --- |
 | `src/lib.rs` | Exports publics et erreurs structurées |
@@ -290,6 +325,6 @@ Extraire l’Artifact correspondant. Dans son répertoire, lancer `./scroll_capt
 | `src/scrolling.rs` | Sélection d’écran, modes, arrêt et encodage Base64 |
 | `src/bin/scroll_capture.rs` | Arguments CLI et fichiers de sortie |
 
-Ce composant dérive de [ShotCraft](https://github.com/mmartinez/shotcraft) et conserve ses mentions de copyright et la licence **MIT OR Apache-2.0**. Voir [LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE), [NOTICE](NOTICE), [ATTRIBUTION.md](ATTRIBUTION.md) et le fichier généré [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md). Joindre les licences et attributions applicables lors de la redistribution ou de l’intégration dans un produit ; les dépendances gardent leurs propres licences.
+Les attributions et textes d’origine sont conservés dans [LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE), [NOTICE](NOTICE) et [ATTRIBUTION.md](ATTRIBUTION.md). Les licences des dépendances figurent dans le fichier généré [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md). Distribuer [LICENSE](LICENSE) avec toutes les mentions applicables d’origine et des dépendances lors de la redistribution ou de l’intégration. Le code ShotCraft d’origine n’est pas relicencié par ce document.
 
 L’interface, l’OCR, l’éditeur, la zone de notification et les ressources de l’application d’origine sont exclus du composant actif. Le répertoire local ignoré `backups/` sert à la restauration et n’est inclus ni dans la distribution Git ni dans la compilation.

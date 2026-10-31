@@ -1,0 +1,100 @@
+ShotCraft Engine Source-Available License 1.0
+
+Copyright (c) 2026 the maintainers of teddyxiong/shotcraft-engine,
+for their original contributions and modifications only.
+
+1. Scope and third-party rights
+
+This license governs only the copyrightable contributions and modifications
+that the maintainers of https://github.com/teddyxiong/shotcraft-engine have the
+right to license (the "Covered Material"). "Licensor" means those rightsholders.
+It does not claim ownership of ShotCraft or other third-party material.
+
+ShotCraft code retains its original MIT OR Apache-2.0 licensing and copyright
+notices; see LICENSE-MIT, LICENSE-APACHE, NOTICE and ATTRIBUTION.md. Dependencies
+retain their own licenses as recorded in THIRD-PARTY-LICENSES.md. This license
+does not restrict rights granted directly under those third-party licenses.
+
+2. Definitions
+
+"Paid Software" is software for which an external user must pay to obtain,
+access, use or unlock the software or any of its features. This includes
+one-time purchases, subscriptions, license fees, paid tiers, paid feature
+unlocks and paid access to hosted software. Integration of the Covered Material
+into Paid Software is covered even if the capture feature itself is free.
+A mandatory payment through a distributor or another intermediary also counts.
+
+"Free Software" in this license means software provided to its users without
+any software access, usage or feature fee. It describes price, not an assertion
+that the software satisfies an open-source or free-software definition.
+Advertising revenue, voluntary sponsorship and optional donations do not make
+software Paid Software, provided payment is not required for software access,
+use or features. This permission applies to software published by individuals,
+companies and other organizations alike.
+
+"Internal Use" means use within an organization for its own operations,
+including its business operations and internal development, without providing
+the Covered Material as part of Paid Software to external users.
+
+3. Free permissions
+
+Subject to this license, Licensor grants a worldwide, non-exclusive,
+royalty-free permission to use, copy, modify, build and integrate the Covered
+Material for Internal Use or for Free Software. You may also use the component
+personally without a fee and redistribute its source or binaries without a
+software fee under this license, including modified versions.
+
+You must preserve applicable copyright, license and attribution notices,
+include this license with redistributed Covered Material, and identify your
+modifications when distributing modified source. Recipients receive the same
+permissions directly from Licensor; you may not offer Licensor's Covered
+Material under terms that bypass the Paid Software requirement below.
+This does not require publishing private modifications or the source code of
+an application that embeds the component.
+
+4. Paid Software requires a separate paid license
+
+Before distributing or providing external users access to Paid Software that
+integrates, invokes or includes the Covered Material, you must obtain a
+separate written paid commercial license from Licensor. This requirement
+applies to modified and unmodified Covered Material, whether linked as a
+library or invoked as a bundled or integrated executable.
+
+Contact the maintainer through https://github.com/teddyxiong/shotcraft-engine/issues
+to arrange authorization. Price, payment, scope and any other commercial terms
+must be agreed separately in writing. An inquiry, notification, donation,
+repository access or silence is not itself commercial authorization.
+
+5. Earlier grants and independent rights
+
+This license applies to copies distributed with this license. It does not
+revoke or narrow any rights already granted under an earlier license. In
+particular, tag v0.1.1 at commit
+114184a9a7a37928c818b1aa8b804bcf02c869a7 and earlier versions retain their
+original terms. If you hold an independent, valid license permitting a use,
+this document does not remove that permission. Future license changes do not
+retroactively change the terms of copies you already received.
+
+6. Notification, names and termination
+
+Please consider notifying the maintainer when publishing modifications or a
+derivative. Notification is a voluntary courtesy, not a condition of the free
+permissions and not a substitute for a paid license where required.
+No rights to use a contributor's names or marks to imply endorsement are
+granted. The permissions in this license end if you breach its conditions;
+this does not terminate independent rights under third-party or earlier
+licenses. A separate commercial agreement governs its own termination terms.
+
+7. Disclaimer
+
+To the extent permitted by applicable law, the Covered Material is provided
+"AS IS", without warranties of any kind, express or implied, including
+merchantability, fitness for a particular purpose and noninfringement.
+Licensor is not liable for claims, damages or other liability arising from
+use of the Covered Material. Any separately agreed written commercial
+warranty or liability terms govern the parties to that agreement.
+
+This is a custom source-available license with a paid-software restriction,
+not the standard MIT or Apache-2.0 license and not an OSI-approved open-source
+license. The English text in this file is authoritative; README summaries
+and translations are explanatory only.

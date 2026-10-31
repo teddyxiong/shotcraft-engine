@@ -4,6 +4,22 @@
 
 ## 1. Features
 
+### Origin and changes
+
+**ShotCraft Engine is a modified and reduced derivative of the source code of [mmartinez/shotcraft](https://github.com/mmartinez/shotcraft).** It retains upstream capture and stitching code and the ShotCraft contributors' copyright notices. This repository is maintained independently and is not an official upstream release.
+
+Compared with the original application, this derivative:
+
+- Extracts the capture component into one Rust library and a CLI; removes the egui UI, editor, OCR, tray, history, application settings, upload and MCP features, and bundled application assets from the active build.
+- Reworks scrolling-frame matching with textured patches and broader pixel verification, preserves fixed headers/footers, refreshes overlapping content and keeps the last accepted frame as the stitching anchor. Algorithmic ideas from [LiteSnap](https://github.com/HuibingLin/LiteSnap) informed these changes; no LiteSnap product code, binaries or assets are bundled. See [ATTRIBUTION.md](ATTRIBUTION.md).
+- Adds display selection from the host window's physical bounds and scale factor, including mixed-DPI coordinate handling; initializes DPI awareness in the Windows CLI. The retained Linux X11 pixmap capture path comes from upstream. Platform limitations remain documented below.
+- Provides JPEG/PNG-to-Base64 APIs, configurable JPEG quality in Rust and ordered image lists for host integration, without a capture panel or clipboard side effects.
+- Adds cooperative stopping through an atomic flag in Rust and a `stop` command on CLI stdin, preserving captured content when stopped.
+- Adds single-screen capture (`--single`) and separate PageDown captures (`--pages`) alongside stitched scrolling capture.
+- Replaces the original application packaging with manually triggered component builds for macOS ARM64/Intel, Windows x64 and Ubuntu x64, and documents integration in four languages.
+
+### Capture modes
+
 A Rust component for full-display capture, with a standalone `scroll_capture` CLI.
 
 | Mode | Input sent | Result |
@@ -280,6 +296,25 @@ Extract the matching Artifact. From its directory run `./scroll_capture --single
 
 ## 6. Source and license
 
+### License and usage permissions
+
+Maintainer-owned contributions and modifications distributed with this revision use the custom [ShotCraft Engine Source-Available License 1.0](LICENSE). This revision of the component as a whole is no longer offered under a blanket MIT/Apache license. The English `LICENSE` is authoritative; this summary explains its scope.
+
+| Use | Authorization |
+| --- | --- |
+| Software with no user access, usage or feature fee, published by an individual, company or organization | Free under `LICENSE` |
+| Free software funded by advertising, voluntary sponsorship or optional donations | Free, provided payment is not required for access, use or features |
+| An organization's own internal use, including business operations | Free under `LICENSE` |
+| Software charging users for purchase, subscription, licensing, a paid tier, feature unlock or hosted software access | Separate written paid commercial license required, even if the capture feature itself is free |
+
+The rule applies to library integration and invoking an integrated CLI, including modified versions. No source disclosure of an embedding application or private changes is required by this custom license. Contact the maintainer through a [repository Issue](https://github.com/teddyxiong/shotcraft-engine/issues) to arrange a commercial license; price and terms are agreed separately. An inquiry or donation alone is not authorization.
+
+Upstream ShotCraft portions retain their **MIT OR Apache-2.0** licenses and copyright. Dependencies retain their own licenses. This custom license covers only material the maintainers have the right to license; it cannot remove independently granted upstream rights or earlier permissions. In particular, **`v0.1.1` at `114184a9a7a37928c818b1aa8b804bcf02c869a7` and earlier versions keep their original terms**. Someone with a valid earlier permissive grant may continue using the covered earlier code under that grant; the new requirement does not force existing licensees to pay.
+
+This is a **source-available** component with a paid-software restriction, not an OSI-approved open-source license. The repository tag `v0.1.1` is unchanged; package version `0.1.1` alone does not identify the license of later main-branch commits, so pin and review the exact commit. This change does not create a new release tag.
+
+If you publish modifications or a derivative, please consider notifying the maintainer through an Issue. This is voluntary, not an additional license condition or a substitute for paid authorization.
+
 | File | Responsibility |
 | --- | --- |
 | `src/lib.rs` | Library exports and structured errors |
@@ -288,6 +323,6 @@ Extract the matching Artifact. From its directory run `./scroll_capture --single
 | `src/scrolling.rs` | Display selection, modes, stopping and Base64 encoding |
 | `src/bin/scroll_capture.rs` | CLI arguments and output files |
 
-This component derives from [ShotCraft](https://github.com/mmartinez/shotcraft), retaining its copyright and **MIT OR Apache-2.0** licensing. See [LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE), [NOTICE](NOTICE), [ATTRIBUTION.md](ATTRIBUTION.md) and generated [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md). Include the applicable license/attribution files when redistributing the component or embedding it in a product; dependencies retain their own licenses.
+Upstream attribution and license texts are retained in [LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE), [NOTICE](NOTICE) and [ATTRIBUTION.md](ATTRIBUTION.md). Dependency licenses are in generated [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md). Distribute [LICENSE](LICENSE) together with all applicable upstream and dependency notices when redistributing the component or embedding it in a product. The original ShotCraft code is not relicensed by this document.
 
 The original UI, OCR, editor, tray and bundled assets are excluded from the active component. Ignored local `backups/` is recovery material, not included in Git distributions or builds.

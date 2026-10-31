@@ -2,7 +2,12 @@ ShotCraft Engine
 
 Contains portions of ShotCraft.
 Copyright (c) 2026 the ShotCraft contributors.
-Licensed under the MIT License or the Apache License, Version 2.0, at your option
-(see LICENSE-MIT and LICENSE-APACHE).
+These upstream portions are licensed under the MIT License or the Apache
+License, Version 2.0, at your option (see LICENSE-MIT and LICENSE-APACHE).
+
+Maintainer-owned contributions and modifications distributed with LICENSE
+are offered under the ShotCraft Engine Source-Available License 1.0.
+See LICENSE for free-use permissions and the paid-software requirement.
+Earlier grants, including v0.1.1, and third-party rights are not revoked.
 
 Dependency licenses are in THIRD-PARTY-LICENSES.md.

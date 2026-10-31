@@ -87,7 +87,7 @@ jobs:
           "$binary" --help
           mkdir -p dist/engine
           cp "$binary" dist/engine/
-          cp LICENSE-MIT LICENSE-APACHE NOTICE ATTRIBUTION.md THIRD-PARTY-LICENSES.md dist/engine/
+          cp LICENSE LICENSE-MIT LICENSE-APACHE NOTICE ATTRIBUTION.md THIRD-PARTY-LICENSES.md dist/engine/
           cp README.md dist/engine/README.md
           git rev-parse HEAD > dist/engine/commit.txt
           rustc -Vv > dist/engine/toolchain.txt
