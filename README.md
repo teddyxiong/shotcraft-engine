@@ -1,6 +1,6 @@
 # ShotCraft Engine
 
-Version: **0.1.3**.
+Version: **0.1.4**.
 
 [English](README.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · [Français](README.fr.md)
 
@@ -311,6 +311,7 @@ Bundle the CLI executable for the target OS/architecture and the required licens
 ### Current behavior and limits
 
 - Stitched: at most 50 capture attempts or 40,000 pixels in height. Three consecutive unchanged frames end capture; three consecutive unmatched frames return an error. Hitting a limit returns the captured portion, not a guarantee of reaching the bottom. Input uses 3 vertical wheel units per step, then a 350 ms wait.
+- Stitched can recognize a verified stationary content region even when peripheral interface elements change; this avoids requiring a byte-identical full-screen image. An unchanged result still does not prove the page bottom was reached.
 - Pages: at most 50 capture attempts; consecutive exactly identical RGBA frames are skipped, and three unchanged frames end capture. No similarity-based deduplication, no stitching requirement and no 40,000-pixel stitched-height limit. Animation, video or system status changes may prevent bottom detection; use `stop` or the attempt limit.
 - Single: exactly one capture, without input or stitching. Screen-capture authorization is still required. This does not by itself establish native Wayland support.
 - When a subsequent capture/input error coincides with a stop, committed content takes priority. A screenshot component without its own windows still captures other visible content; scrolling modes visibly change the desktop.

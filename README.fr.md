@@ -1,6 +1,6 @@
 # ShotCraft Engine
 
-Version actuelle : **0.1.3**.
+Version actuelle : **0.1.4**.
 
 [English](README.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · [Français](README.fr.md)
 
@@ -313,6 +313,7 @@ Distribuer l’exécutable correspondant au système et à l’architecture, ave
 ### Comportement actuel
 
 - Assemblé : au plus 50 tentatives de capture ou 40 000 pixels de hauteur. Trois images consécutives inchangées terminent la capture ; trois échecs consécutifs de correspondance produisent une erreur. À la limite, seule la partie acquise est renvoyée, sans garantie d’atteindre le bas. Chaque étape utilise 3 unités verticales de molette, puis attend 350 ms.
+- L’assemblage peut reconnaître une zone de contenu immobile après vérification stricte malgré des changements de l’interface périphérique, sans exiger une capture entière identique octet par octet. Cela ne prouve toujours pas que le bas de page est atteint.
 - Pages : au plus 50 tentatives. Les images RGBA consécutives exactement identiques sont ignorées ; trois images inchangées terminent la capture. Pas de dédoublonnage par similarité, de correspondance obligatoire ni de limite d’assemblage de 40 000 pixels. Vidéo, animations ou changements d’état système peuvent empêcher la détection de fin : utiliser `stop` ou la limite de tentatives.
 - Simple : une capture sans entrée ni assemblage. L’autorisation de capture reste nécessaire ; cela ne prouve pas la prise en charge native de Wayland.
 - Si une erreur de capture ultérieure ou d’entrée coïncide avec l’arrêt, le contenu validé est prioritaire. Sans fenêtre propre au composant, les autres contenus visibles restent capturables ; les modes de défilement modifient réellement le bureau.

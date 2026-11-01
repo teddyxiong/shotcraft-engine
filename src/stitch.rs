@@ -95,6 +95,9 @@ impl Stitcher {
         self.diagnostic.header = header;
         self.diagnostic.footer = footer;
         let Some((dy, detected_footer, refresh_from)) = find_offset(prev, &img, header, known_footer, &active, &mut self.diagnostic) else {
+            if unchanged_content(prev, &img, header, footer, &active, &mut self.diagnostic) {
+                return Push::Unchanged;
+            }
             return Push::NoMatch;
         };
         if self.footer.is_none() {
@@ -356,6 +359,39 @@ fn textured(img: &RgbaImage, x: usize, y: usize) -> bool {
         .any(|(nx, ny)| diff_at(img, x, y, img, nx, ny) >= 0.035)
 }
 
+fn unchanged_content(prev: &RgbaImage, cur: &RgbaImage, header: usize, footer: usize, columns: &[usize], diagnostic: &mut MatchDiagnostic) -> bool {
+    const MAX_ERROR: f32 = 0.01;
+    let end = prev.height() as usize - footer;
+    if header >= end {
+        return false;
+    }
+    let mut row_diffs = Vec::new();
+    for y in sample_rows(header, end - 1, 64) {
+        let mut sum = 0.0;
+        let mut count = 0;
+        for &x in columns {
+            if textured(prev, x, y) || textured(cur, x, y) {
+                sum += diff_at(prev, x, y, cur, x, y);
+                count += 1;
+            }
+        }
+        if count > 0 {
+            row_diffs.push(sum / count as f32);
+        }
+    }
+    let error = row_diffs.iter().sum::<f32>() / row_diffs.len().max(1) as f32;
+    if row_diffs.len() < MIN_COMPARED_ROWS || error > MAX_ERROR {
+        return false;
+    }
+    diagnostic.reason = "unchanged content";
+    diagnostic.best_dy = Some(0);
+    diagnostic.compared = row_diffs.len();
+    diagnostic.matched = row_diffs.iter().filter(|&&diff| diff <= MAX_ERROR).count();
+    diagnostic.score = 1.0 - error;
+    diagnostic.footer = footer;
+    true
+}
+
 fn infer_footer(prev: &RgbaImage, cur: &RgbaImage, dy: usize, fallback: usize, columns: &[usize]) -> usize {
     let h = prev.height() as usize;
     let mut run = 0;
@@ -511,6 +547,25 @@ mod tests {
         s.push(page(8, 60));
         let other = RgbaImage::from_fn(8, 60, |x, y| image::Rgba([(x * 31) as u8, (y * 7) as u8, 99, 255]));
         assert_eq!(s.push(other), Push::NoMatch);
+    }
+
+    #[test]
+    fn unchanged_body_ignores_changing_fixed_header() {
+        let p = page(160, 120);
+        let frame = |shade| {
+            let mut frame = view(&p, 0, 120);
+            let header = RgbaImage::from_pixel(160, 8, image::Rgba([shade, shade, shade, 255]));
+            image::imageops::replace(&mut frame, &header, 0, 0);
+            frame
+        };
+        let first = frame(60);
+        let mut s = Stitcher::new(10_000);
+        assert_eq!(s.push(first.clone()), Push::Appended(120));
+        for shade in [80, 100, 120] {
+            assert_eq!(s.push(frame(shade)), Push::Unchanged);
+            assert_eq!(s.height(), 120);
+        }
+        assert_eq!(s.finish().unwrap(), first);
     }
 
     #[test]
