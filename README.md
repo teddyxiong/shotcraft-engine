@@ -1,5 +1,7 @@
 # ShotCraft Engine
 
+Version: **0.1.3**.
+
 [English](README.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · [Français](README.fr.md)
 
 ## 1. Features
@@ -92,10 +94,51 @@ Pages mode captures first, then sends one PageDown and waits 350 ms before each 
 
 Each `.base64` file contains standard Base64 for its JPEG, without a data URI prefix. Full-display images retain capture dimensions; stitched images retain the resulting stitched dimensions. No resizing occurs.
 
-Enter exactly `stop` followed by Enter on stdin to stop further scrolling and return captured content. It is lowercase with no surrounding spaces. Before the first frame, a stop returns an error without an image. Single mode preserves a frame already captured. Switching to the terminal may contaminate captures; a host can send `stop
-` through a pipe without changing focus.
+Enter exactly `stop` followed by Enter on stdin to stop further scrolling and return captured content. It is lowercase with no surrounding spaces. Before the first frame, a stop returns an error without an image. Single mode preserves a frame already captured. Switching to the terminal may contaminate captures; a host can send `stop\n` through a pipe without changing focus.
 
 Files are written only after capture returns, not after each frame. `Ctrl+C` or forced termination may lose all unsaved results. A normal capture error generally does not save earlier frames; a write error may leave partial files. Exit code 0 means successful completion; failures return a nonzero code. stdout lists paths, dimensions and JPEG byte counts, not raw Base64. Directory existence alone does not indicate success.
+
+### Reading live CLI progress
+
+Since `0.1.3`, every capture command automatically writes progress to **stderr**, one line per event. No new CLI option is needed. Only lines beginning with the exact prefix `PROGRESS ` are machine-readable; parse the remainder as JSON. Preparation and error messages can also appear on stderr. stdout still contains the final file paths and dimensions.
+
+```text
+PROGRESS {"mode":"pages","captured_images":6,"stitched_height":null,"screen_height":1080,"approximate_screens":null,"simulated_percent":48,"status":"capturing"}
+PROGRESS {"mode":"stitched","captured_images":null,"stitched_height":2592,"screen_height":1080,"approximate_screens":2.4,"simulated_percent":48,"status":"capturing"}
+```
+
+Read `captured_images` for Single/Pages, or `approximate_screens` for Stitched. The latter equals `stitched_height / screen_height`; the unit is one full first-frame height, including visible application/system chrome, not a document page. `null` means the field does not apply or the first screen height is not yet known. The first event has zero counts and `screen_height: 0`.
+
+Each event is a snapshot: replace the displayed value rather than incrementing once per message. Encoding/status events can repeat the same counts, and unchanged or rejected frames do not increase the count. These values describe only this capture session, not total page length or percentage. Use “Captured 6 images” or “Captured approximately 2.4 screens”.
+
+For example, this Python 3 subprocess reader uses only the standard library. Use a fresh output directory, change `--pages` to `--single`, or omit the mode argument for Stitched. stdout is inherited, so final file output is not left blocked in an unread pipe:
+
+```python
+import json
+import subprocess
+import sys
+
+command = ["./target/release/scroll_capture", "--pages", "./pages-01"]
+if sys.platform == "win32":
+    command[0] = r".\target\release\scroll_capture.exe"
+
+with subprocess.Popen(command, stderr=subprocess.PIPE, text=True) as child:
+    for line in child.stderr:
+        if not line.startswith("PROGRESS "):
+            print(line, end="", file=sys.stderr)
+            continue
+        progress = json.loads(line[len("PROGRESS "):])
+        if progress["captured_images"] is not None:
+            print("Captured images:", progress["captured_images"])
+        if progress["approximate_screens"] is not None:
+            print(f"Captured approximately {progress['approximate_screens']:.1f} screens")
+        print("Simulated processing:", str(progress["simulated_percent"]) + "%")
+        print("Capture status:", progress["status"])
+    if child.wait() != 0:
+        raise SystemExit(child.returncode)
+```
+
+For other hosts, consume stderr continuously and apply the same prefix/JSON parsing. If both stdout and stderr are piped, drain both. Counts mean captured/encoded content, not files already saved. Wait for process exit code 0 before treating file output as successful, even after a successful capture terminal event.
 
 ## 3. Integration with other software
 
@@ -124,6 +167,15 @@ pub fn capture_to_base64(
     quality: Option<u8>,
     stop: &std::sync::atomic::AtomicBool,
     mode: CaptureMode,
+) -> shotcraft_engine::Result<Vec<String>>;
+
+pub fn capture_to_base64_with_progress(
+    bounds: WindowBounds,
+    format: Option<String>,
+    quality: Option<u8>,
+    stop: &std::sync::atomic::AtomicBool,
+    mode: CaptureMode,
+    on_progress: impl FnMut(CaptureProgress),
 ) -> shotcraft_engine::Result<Vec<String>>;
 
 pub fn encode_image_to_base64(
@@ -167,7 +219,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-Choose `CaptureMode::Stitched` for one long image, or `CaptureMode::Pages` for separate pages. Both `Single` and `Stitched` return a list of length 1; `Pages` returns one string per accepted page. Successful results are nonempty and returned together when the call completes, not through per-frame callbacks.
+Choose `CaptureMode::Stitched` for one long image, or `CaptureMode::Pages` for separate pages. Both `Single` and `Stitched` return a list of length 1; `Pages` returns one string per accepted page. Successful image results are nonempty and returned together when the call completes; the optional progress callback reports numbers and states only.
 
 This API blocks and has no 10-second CLI delay. Use a worker thread or a host's `spawn_blocking`; never synchronously join on the UI event thread. The host owns window visibility, focus, permissions and shortcut registration. The library has no Tauri dependency or built-in global stop shortcut.
 
@@ -189,10 +241,70 @@ let base64 = shotcraft_engine::scrolling::encode_image_to_base64(
 
 Base64 decoding yields the selected image format's bytes. Pass strings directly if the receiver expects plain Base64, or prepend `data:image/jpeg;base64,` / `data:image/png;base64,` if required. For Pages, pass images individually in list order; concatenating Base64 strings does not form one image. The library does not upload to AI services or Pluely14.
 
+### Reading live progress in Rust
+
+The existing `capture_to_base64` API still works without a callback. To receive progress, call `capture_to_base64_with_progress` with the same five arguments plus a callback. Inside the worker from the preceding example, use:
+
+```rust,ignore
+use shotcraft_engine::scrolling::{
+    CaptureMode, CaptureProgress, capture_to_base64_with_progress,
+};
+
+let images = capture_to_base64_with_progress(
+    bounds, Some("jpeg".into()), Some(80), &worker_stop, CaptureMode::Pages,
+    |progress: CaptureProgress| {
+        if let Some(count) = progress.captured_images {
+            println!("Captured images: {count}");
+        }
+        if let Some(screens) = progress.approximate_screens() {
+            println!("Captured approximately {screens:.1} screens");
+        }
+        println!("Simulated processing: {}%", progress.simulated_percent);
+        println!("Capture status: {:?}", progress.status);
+    },
+)?;
+```
+
+Select `CaptureMode::Single` to receive `captured_images = Some(1)` on success, `Pages` for accepted image counts, or `Stitched` for `approximate_screens()`. Images are still returned together as `Vec<String>`; progress notifications contain no images or Base64.
+
+| Rust value | CLI JSON value | Meaning |
+| --- | --- | --- |
+| `progress.mode` | `mode`: `single`, `pages`, `stitched` | Current mode |
+| `progress.captured_images` | `captured_images`: integer or `null` | Single/Pages: accepted image count; Stitched: `None` / `null` |
+| `progress.stitched_height` | `stitched_height`: integer or `null` | Stitched: current output height in pixels; other modes: `None` / `null` |
+| `progress.screen_height` | `screen_height`: integer | First screenshot height in pixels; initially 0, then fixed |
+| `progress.approximate_screens()` | `approximate_screens`: number or `null` | Stitched height divided by nonzero first screenshot height; otherwise unavailable |
+| `progress.simulated_percent` | `simulated_percent`: integer 1–100 | Simulated processing percentage; 100 only after successful result encoding, not file saving |
+| `progress.status` | `status`: string below | Current phase or capture end reason |
+
+### Simulated processing percentage
+
+Read `progress.simulated_percent` in Rust or `simulated_percent` in CLI JSON. This separate integer goes from **1 to 100** and describes simulated processing progress, not the page's scroll position, captured fraction or remaining time. It does not read the scrollbar or estimate total page height. The callback, command and arguments are unchanged; no new option is required.
+
+The initial event is 1%. Each committed image or increase in stitched height advances toward 90% using `p = min(90, p + max(1, (90 - p) / 8))`, with integer division. For example, successive content events give 12%, 21%, 29%, 36%, 42%, 48%, then grow more slowly. Single/Stitched final encoding advances to at least 95%. Pages encode each image during capture, so those encoding events do not jump to 95%.
+
+Only after all result images have been successfully encoded does a successful terminal event report 100%. `Failed` keeps the previous value below 100%. A successful partial result after `Stopped`, `FrameLimit` or `HeightLimit` also reports 100%: the current task finished processing, not necessarily the entire page. Check `status` to distinguish these outcomes. Values are monotonic within a task but update only on events, may repeat, and can jump; no timer or continuous sequence of every integer is promised.
+
+Display this as “Processing: 48%”. Keep “Captured 6 images” / “approximately 2.4 screens” as the separate content counters. CLI 100% still does not confirm file saving; wait for exit code 0. A host can animate between received values, but should cap its own animation below 100 until it receives successful completion.
+
+| `CaptureStatus` | CLI `status` | Meaning |
+| --- | --- | --- |
+| `Capturing` | `capturing` | Initial snapshot or newly committed content |
+| `Encoding` | `encoding` | Encoding an accepted image; may occur once per page |
+| `SingleFrame` | `single_frame` | Single image successfully encoded |
+| `Stopped` | `stopped` | User stop; committed content successfully encoded |
+| `Unchanged` | `unchanged` | Three consecutive unchanged frames; not proof of reaching the page bottom |
+| `FrameLimit` | `frame_limit` | 50 capture attempts reached |
+| `HeightLimit` | `height_limit` | Stitched height limit reached |
+| `Failed` | `failed` | Capture/encoding failed; inspect the returned `Err` |
+
+The last six states are terminal capture states. Successful terminal events follow encoding, not CLI file saving. If capture fails after reporting some content, the `Result` is still an error and does not return those images. Keep the last count informational; it is not a saved-result guarantee.
+
+Callbacks execute synchronously on the capture thread, not automatically on the UI thread. Keep them fast, nonblocking and nonpanicking; enqueue only the small snapshot to the host's UI/event loop. There is no fixed-rate heartbeat. A session is identified by the callback/task owned by the host; no global progress storage or task registry is added.
+
 ### CLI as a subprocess
 
-Bundle the CLI executable for the target OS/architecture and the required license files. Launch it with the arguments above and a fresh output directory; keep stdin piped. To stop, write and flush `stop
-`; closing stdin alone does not stop capture. Wait for exit code 0 before reading `.jpg` / `.base64` files. The CLI is an executable, while direct Rust integration uses the source dependency above.
+Bundle the CLI executable for the target OS/architecture and the required license files. Launch it with the arguments above and a fresh output directory; keep stdin piped. To stop, write and flush `stop\n`; closing stdin alone does not stop capture. Wait for exit code 0 before reading `.jpg` / `.base64` files. The CLI is an executable, while direct Rust integration uses the source dependency above.
 
 ## 4. Platforms and boundaries
 

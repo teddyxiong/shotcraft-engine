@@ -1,5 +1,7 @@
 # ShotCraft Engine
 
+現在のバージョン：**0.1.3**。
+
 [English](README.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · [Français](README.fr.md)
 
 ## 1. 機能概要
@@ -94,10 +96,51 @@ cargo run --release --locked --bin scroll_capture -- --single ./single-01
 
 `.base64` は対応する JPEG の標準 Base64 で、data URI プレフィックスは含みません。画面全体の画像は撮影時のサイズ、結合画像は結合結果のサイズを保持し、リサイズしません。
 
-標準入力に小文字の `stop` だけを入力して Enter を押すと、以降のスクロールを止め、取得済みの内容を返します。前後に空白を付けないでください。最初のフレームより前の停止はエラーとなり、画像は生成しません。単一画面モードで既に撮影したフレームは保持します。端末への切り替えが画像に混入することがあるため、ホストはパイプ経由で `stop
-` を送信できます。
+標準入力に小文字の `stop` だけを入力して Enter を押すと、以降のスクロールを止め、取得済みの内容を返します。前後に空白を付けないでください。最初のフレームより前の停止はエラーとなり、画像は生成しません。単一画面モードで既に撮影したフレームは保持します。端末への切り替えが画像に混入することがあるため、ホストはパイプ経由で `stop\n` を送信できます。
 
 保存はキャプチャ関数が戻った後にまとめて行い、フレームごとには保存しません。`Ctrl+C` や強制終了は未保存の結果を失う可能性があります。通常の撮影エラーでは以前のフレームも保存されず、書き込みエラーでは一部ファイルだけ残る場合があります。成功時の終了コードは 0、失敗時は非 0 です。標準出力はパス、サイズ、JPEG バイト数を表示し、Base64 本文は出力しません。ディレクトリの存在だけで成功とは判断できません。
+
+### CLI のリアルタイム進捗を読む
+
+`0.1.3` 以降は追加オプションなしで、すべての撮影コマンドが **stderr** に進捗を 1 イベント 1 行で出力します。正確に `PROGRESS ` で始まる行だけを対象とし、プレフィックス以降を JSON として解析します。準備・エラーメッセージも stderr に出ます。stdout は引き続き最終ファイルパスとサイズです。
+
+```text
+PROGRESS {"mode":"pages","captured_images":6,"stitched_height":null,"screen_height":1080,"approximate_screens":null,"simulated_percent":48,"status":"capturing"}
+PROGRESS {"mode":"stitched","captured_images":null,"stitched_height":2592,"screen_height":1080,"approximate_screens":2.4,"simulated_percent":48,"status":"capturing"}
+```
+
+単一画面/ページでは `captured_images`、結合では `approximate_screens` を読みます。後者は `stitched_height / screen_height` です。1 画面は最初の完全なスクリーンショットの高さで、アプリやシステムの表示を含み、文書のページ数ではありません。`null` は非該当、または最初の高さが未取得であることを示します。最初のイベントは計数 0、`screen_height: 0` です。
+
+イベントは現在値のスナップショットです。受信のたびに加算せず、表示値を置き換えます。エンコードや状態変更で同じ値が繰り返されることがあり、不変・拒否フレームは増加させません。今回の取得量だけを示し、全体の高さや百分率ではありません。「6 枚取得」「約 2.4 画面分取得」のように表示します。
+
+次の Python 3 例は標準ライブラリのみを使います。新規出力先を指定し、単一画面は `--single`、結合はモード引数を省略してください。stdout は継承するため、読まれないパイプで最終出力が詰まりません。
+
+```python
+import json
+import subprocess
+import sys
+
+command = ["./target/release/scroll_capture", "--pages", "./pages-01"]
+if sys.platform == "win32":
+    command[0] = r".\target\release\scroll_capture.exe"
+
+with subprocess.Popen(command, stderr=subprocess.PIPE, text=True) as child:
+    for line in child.stderr:
+        if not line.startswith("PROGRESS "):
+            print(line, end="", file=sys.stderr)
+            continue
+        progress = json.loads(line[len("PROGRESS "):])
+        if progress["captured_images"] is not None:
+            print("Captured images:", progress["captured_images"])
+        if progress["approximate_screens"] is not None:
+            print(f"Captured approximately {progress['approximate_screens']:.1f} screens")
+        print("Simulated processing:", str(progress["simulated_percent"]) + "%")
+        print("Capture status:", progress["status"])
+    if child.wait() != 0:
+        raise SystemExit(child.returncode)
+```
+
+他のホストも stderr を継続的に読み、プレフィックスと JSON を解析します。stdout と stderr の両方をパイプにする場合は両方を読み取ってください。数値は取得・エンコード済み内容であり、ファイル保存済みではありません。成功の撮影終端イベント後も、終了コード 0 でファイル出力の成功を確認します。
 
 ## 3. 他のソフトウェアから呼び出す
 
@@ -126,6 +169,15 @@ pub fn capture_to_base64(
     quality: Option<u8>,
     stop: &std::sync::atomic::AtomicBool,
     mode: CaptureMode,
+) -> shotcraft_engine::Result<Vec<String>>;
+
+pub fn capture_to_base64_with_progress(
+    bounds: WindowBounds,
+    format: Option<String>,
+    quality: Option<u8>,
+    stop: &std::sync::atomic::AtomicBool,
+    mode: CaptureMode,
+    on_progress: impl FnMut(CaptureProgress),
 ) -> shotcraft_engine::Result<Vec<String>>;
 
 pub fn encode_image_to_base64(
@@ -169,7 +221,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-縦長画像には `CaptureMode::Stitched`、個別ページには `CaptureMode::Pages` を指定します。`Single` と `Stitched` は長さ 1 のリスト、`Pages` は採用した画像ごとの文字列を返します。成功時は少なくとも 1 枚あり、関数終了時に一括で返します。フレームごとのコールバックはありません。
+縦長画像には `CaptureMode::Stitched`、個別ページには `CaptureMode::Pages` を指定します。`Single` と `Stitched` は長さ 1 のリスト、`Pages` は採用した画像ごとの文字列を返します。成功時は少なくとも 1 枚あり、関数終了時に一括で返します。任意の進捗コールバックは数値と状態のみを通知します。
 
 API は同期・ブロッキングで、CLI の 10 秒待機はありません。ワーカーまたはホストの `spawn_blocking` で実行し、UI イベントスレッドで同期的に `join` しないでください。表示制御、フォーカス、権限、ショートカット登録はホストの責任です。Tauri 依存関係や組み込みのグローバル停止キーはありません。
 
@@ -191,10 +243,70 @@ let base64 = shotcraft_engine::scrolling::encode_image_to_base64(
 
 Base64 をデコードすると指定形式の画像バイト列になります。受信側が素の Base64 を受け取るならそのまま渡し、必要なら `data:image/jpeg;base64,` / `data:image/png;base64,` を付けます。ページは順番に個別画像として渡してください。Base64 文字列の連結は 1 枚の画像にはなりません。AI サービスや Pluely14 への自動送信は行いません。
 
+### Rust でリアルタイム進捗を読む
+
+従来の `capture_to_base64` はコールバックなしで使えます。通知には `capture_to_base64_with_progress` を使い、同じ 5 引数の後にコールバックを渡します。前述のワーカースレッド内で次のように呼びます。
+
+```rust,ignore
+use shotcraft_engine::scrolling::{
+    CaptureMode, CaptureProgress, capture_to_base64_with_progress,
+};
+
+let images = capture_to_base64_with_progress(
+    bounds, Some("jpeg".into()), Some(80), &worker_stop, CaptureMode::Pages,
+    |progress: CaptureProgress| {
+        if let Some(count) = progress.captured_images {
+            println!("Captured images: {count}");
+        }
+        if let Some(screens) = progress.approximate_screens() {
+            println!("Captured approximately {screens:.1} screens");
+        }
+        println!("Simulated processing: {}%", progress.simulated_percent);
+        println!("Capture status: {:?}", progress.status);
+    },
+)?;
+```
+
+`CaptureMode::Single` は成功時 `captured_images = Some(1)`、`Pages` は採用画像数、`Stitched` は `approximate_screens()` を読みます。画像は終了後に `Vec<String>` で一括返却され、進捗には画像や Base64 を含みません。
+
+| Rust の値 | CLI JSON の値 | 意味 |
+| --- | --- | --- |
+| `progress.mode` | `mode`: `single`, `pages`, `stitched` | モード |
+| `progress.captured_images` | `captured_images`: 整数または `null` | 単一画面/ページの採用画像数。結合は `None` / `null` |
+| `progress.stitched_height` | `stitched_height`: 整数または `null` | 現在の結合高さ（ピクセル）。他モードは `None` / `null` |
+| `progress.screen_height` | `screen_height`: 整数 | 最初の撮影高さ。初期値 0、取得後は固定 |
+| `progress.approximate_screens()` | `approximate_screens`: 数値または `null` | 結合高さを 0 でない最初の高さで割った値。算出不可ならなし |
+| `progress.simulated_percent` | `simulated_percent`: 1～100 の整数 | 模擬処理進捗。結果のエンコード成功後のみ 100。保存完了ではない |
+| `progress.status` | `status`: 以下の文字列 | 段階または終了理由 |
+
+### 模擬処理パーセント
+
+Rust は `progress.simulated_percent`、CLI JSON は `simulated_percent` を読みます。独立した **1～100 の整数**で、模擬的な処理進捗です。ページのスクロール位置、取得割合、残り時間ではありません。スクロールバーを読まず、全体の高さも推定しません。呼び出し、コマンド、引数は変わらず、追加オプションは不要です。
+
+初期イベントは 1% です。画像の採用または結合高さの増加ごとに、整数除算の `p = min(90, p + max(1, (90 - p) / 8))` で 90% に近づけます。連続する内容イベントは 12%、21%、29%、36%、42%、48% と進み、その後は遅くなります。単一画面/結合の最終エンコードでは少なくとも 95% になります。ページは毎回エンコードするため、その段階では 95% に飛びません。
+
+全結果画像のエンコード成功後に限り、成功終端が 100% を通知します。`Failed` は以前の 100 未満の値を保持します。`Stopped`、`FrameLimit`、`HeightLimit` で部分結果が正常に作成された場合も 100% になります。今回の処理完了であり、ページ全体の取得完了ではありません。`status` で区別してください。値はタスク内で単調非減少ですが、イベント時のみ更新され、重複や飛びがあります。タイマーや全整数の連続通知はありません。
+
+「処理中：48%」と表示し、「6 枚取得／約 2.4 画面分」は別の内容カウンターにします。CLI の 100% は保存成功ではなく、終了コード 0 を待ちます。ホストが受信値の間を補間表示する場合も、成功完了通知前に 100% にしないでください。
+
+| `CaptureStatus` | CLI `status` | 意味 |
+| --- | --- | --- |
+| `Capturing` | `capturing` | 初期スナップショットまたは新しい確定内容 |
+| `Encoding` | `encoding` | 採用画像をエンコード中。ページごとに発生する場合あり |
+| `SingleFrame` | `single_frame` | 単一画面のエンコード成功 |
+| `Stopped` | `stopped` | ユーザー停止。取得済み内容のエンコード成功 |
+| `Unchanged` | `unchanged` | 3 フレーム連続不変。ページ末尾到達の保証ではない |
+| `FrameLimit` | `frame_limit` | 50 回の撮影試行上限 |
+| `HeightLimit` | `height_limit` | 結合高さ上限 |
+| `Failed` | `failed` | 撮影/エンコード失敗。戻り値 `Err` を確認 |
+
+最後の 6 状態は撮影の終端です。成功終端はエンコード後に通知され、CLI ファイル保存の成功ではありません。途中の内容を通知後に失敗した場合も戻り値はエラーで、画像は返りません。直前の計数は情報表示のみです。
+
+通知は撮影スレッドで同期実行され、UI スレッドへ自動転送されません。高速・非ブロッキングで panic しない処理にし、小さなスナップショットだけをホストの UI/イベントループへ送ってください。一定間隔のハートビートはありません。タスクとの関連付けはホストが担当し、グローバル進捗保存やタスク登録機構は追加しません。
+
 ### CLI を子プロセスとして使う
 
-対象 OS・アーキテクチャ用の実行ファイルと必要なライセンスを同梱し、前述の引数と新規出力ディレクトリで起動します。標準入力をパイプで保持し、停止時は `stop
-` を書いてフラッシュします。標準入力を閉じるだけでは停止しません。終了コード 0 を確認してから `.jpg` / `.base64` を読みます。CLI は単独実行ファイルで、Rust への直接組み込みは前述のソース依存関係を使います。
+対象 OS・アーキテクチャ用の実行ファイルと必要なライセンスを同梱し、前述の引数と新規出力ディレクトリで起動します。標準入力をパイプで保持し、停止時は `stop\n` を書いてフラッシュします。標準入力を閉じるだけでは停止しません。終了コード 0 を確認してから `.jpg` / `.base64` を読みます。CLI は単独実行ファイルで、Rust への直接組み込みは前述のソース依存関係を使います。
 
 ## 4. プラットフォームと制限
 

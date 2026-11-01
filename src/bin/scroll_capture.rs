@@ -12,14 +12,15 @@ use std::time::Duration;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use shotcraft_engine::scrolling::{CaptureMode, WindowBounds, capture_to_base64};
+use shotcraft_engine::scrolling::{CaptureMode, CaptureProgress, CaptureStatus, WindowBounds, capture_to_base64_with_progress};
 
 const USAGE: &str = "Usage: scroll_capture [--single | --pages] <new-output-directory> [x y width height scale_factor]\n\
 Bounds are physical outer-window coordinates; scale_factor is required for macOS mixed-DPI display selection.\n\
 Without geometry, selects the display containing the desktop origin using bounds (0, 0, 100, 100).\n\
 Default mode stitches scrolling content; --single captures once without input; --pages saves each distinct full-screen frame and advances with PageDown.\n\
 In --pages mode, focus the browser page yourself; PageDown behavior depends on the application.\n\
-During capture, enter exactly `stop` on stdin to request a partial result.";
+During capture, enter exactly `stop` on stdin to request a partial result.\n\
+Progress is emitted as `PROGRESS {JSON}` on stderr; simulated_percent indicates simulated processing, not page coverage or saved files.";
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut args = std::env::args().skip(1);
@@ -91,7 +92,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         ),
     }
     thread::sleep(Duration::from_secs(10));
-    let encoded_images = capture_to_base64(bounds, Some("jpeg".into()), Some(80), &stop, mode)?;
+    let encoded_images = capture_to_base64_with_progress(bounds, Some("jpeg".into()), Some(80), &stop, mode, print_progress)?;
     for (index, encoded) in encoded_images.into_iter().enumerate() {
         let jpeg = STANDARD.decode(encoded.as_bytes())?;
         let image = image::load_from_memory(&jpeg)?;
@@ -110,4 +111,31 @@ fn main() -> Result<(), Box<dyn Error>> {
         println!("Dimensions: {}x{}; JPEG bytes: {}", image.width(), image.height(), jpeg.len());
     }
     Ok(())
+}
+
+fn print_progress(progress: CaptureProgress) {
+    let mode = match progress.mode {
+        CaptureMode::Single => "single",
+        CaptureMode::Stitched => "stitched",
+        CaptureMode::Pages => "pages",
+    };
+    let status = match progress.status {
+        CaptureStatus::Capturing => "capturing",
+        CaptureStatus::Encoding => "encoding",
+        CaptureStatus::SingleFrame => "single_frame",
+        CaptureStatus::Stopped => "stopped",
+        CaptureStatus::Unchanged => "unchanged",
+        CaptureStatus::FrameLimit => "frame_limit",
+        CaptureStatus::HeightLimit => "height_limit",
+        CaptureStatus::Failed => "failed",
+    };
+    let captured_images = progress.captured_images.map(|value| value.to_string()).unwrap_or_else(|| "null".into());
+    let stitched_height = progress.stitched_height.map(|value| value.to_string()).unwrap_or_else(|| "null".into());
+    let approximate_screens = progress.approximate_screens().map(|value| value.to_string()).unwrap_or_else(|| "null".into());
+    let _ = writeln!(
+        io::stderr().lock(),
+        "PROGRESS {{\"mode\":\"{mode}\",\"captured_images\":{captured_images},\"stitched_height\":{stitched_height},\"screen_height\":{},\"approximate_screens\":{approximate_screens},\"status\":\"{status}\",\"simulated_percent\":{}}}",
+        progress.screen_height,
+        progress.simulated_percent
+    );
 }

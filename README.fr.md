@@ -1,5 +1,7 @@
 # ShotCraft Engine
 
+Version actuelle : **0.1.3**.
+
 [English](README.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · [Français](README.fr.md)
 
 ## 1. Fonctionnalités
@@ -94,10 +96,51 @@ Le mode pages capture d’abord une image, puis envoie un PageDown et attend 350
 
 Chaque fichier `.base64` contient le Base64 standard du JPEG correspondant, sans préfixe data URI. Les captures complètes gardent leurs dimensions d’origine ; l’image assemblée garde les dimensions de l’assemblage. Aucun redimensionnement n’est effectué.
 
-Saisir exactement `stop` en minuscules, sans espaces, puis Entrée sur l’entrée standard pour arrêter le défilement et conserver le contenu acquis. Avant la première image, l’arrêt renvoie une erreur sans image. Le mode simple conserve une image déjà capturée. Revenir au terminal peut contaminer la capture ; l’hôte peut envoyer `stop
-` par un tube sans changer le focus.
+Saisir exactement `stop` en minuscules, sans espaces, puis Entrée sur l’entrée standard pour arrêter le défilement et conserver le contenu acquis. Avant la première image, l’arrêt renvoie une erreur sans image. Le mode simple conserve une image déjà capturée. Revenir au terminal peut contaminer la capture ; l’hôte peut envoyer `stop\n` par un tube sans changer le focus.
 
 Les fichiers sont écrits après le retour de la fonction, pas à chaque image. `Ctrl+C` ou un arrêt forcé peut perdre tous les résultats non enregistrés. Une erreur de capture ordinaire n’enregistre généralement pas les images précédentes ; une erreur d’écriture peut laisser des fichiers partiels. Le code de sortie est 0 en cas de réussite et non nul en cas d’erreur. stdout affiche les chemins, dimensions et tailles JPEG en octets, pas le Base64 brut. L’existence du répertoire ne suffit pas à prouver la réussite.
+
+### Lire la progression CLI en direct
+
+Depuis `0.1.3`, chaque commande écrit automatiquement la progression sur **stderr**, un événement par ligne, sans nouvelle option. Seules les lignes commençant exactement par `PROGRESS ` sont structurées : retirer ce préfixe puis décoder le JSON. stderr contient aussi la préparation et les erreurs. stdout garde les chemins et dimensions finaux.
+
+```text
+PROGRESS {"mode":"pages","captured_images":6,"stitched_height":null,"screen_height":1080,"approximate_screens":null,"simulated_percent":48,"status":"capturing"}
+PROGRESS {"mode":"stitched","captured_images":null,"stitched_height":2592,"screen_height":1080,"approximate_screens":2.4,"simulated_percent":48,"status":"capturing"}
+```
+
+Lire `captured_images` pour Simple/Pages ou `approximate_screens` pour l’assemblage. Cette dernière valeur est `stitched_height / screen_height`. L’unité est la hauteur complète de la première capture, incluant les éléments visibles de l’application et du système, pas une page de document. `null` signifie non applicable ou hauteur initiale encore inconnue. Le premier événement a des comptes à 0 et `screen_height: 0`.
+
+Chaque événement est un instantané : remplacer la valeur affichée, sans incrémenter à chaque message. Plusieurs phases peuvent répéter les mêmes nombres ; les images inchangées ou rejetées ne les augmentent pas. Ces valeurs décrivent cette session, pas la longueur totale ou un pourcentage. Afficher « 6 images capturées » ou « environ 2,4 écrans capturés ».
+
+Cet exemple Python 3 utilise uniquement la bibliothèque standard. Choisir un nouveau répertoire ; remplacer `--pages` par `--single`, ou retirer le mode pour l’assemblage. stdout est hérité afin de ne pas bloquer la sortie finale dans un tube non lu :
+
+```python
+import json
+import subprocess
+import sys
+
+command = ["./target/release/scroll_capture", "--pages", "./pages-01"]
+if sys.platform == "win32":
+    command[0] = r".\target\release\scroll_capture.exe"
+
+with subprocess.Popen(command, stderr=subprocess.PIPE, text=True) as child:
+    for line in child.stderr:
+        if not line.startswith("PROGRESS "):
+            print(line, end="", file=sys.stderr)
+            continue
+        progress = json.loads(line[len("PROGRESS "):])
+        if progress["captured_images"] is not None:
+            print("Captured images:", progress["captured_images"])
+        if progress["approximate_screens"] is not None:
+            print(f"Captured approximately {progress['approximate_screens']:.1f} screens")
+        print("Simulated processing:", str(progress["simulated_percent"]) + "%")
+        print("Capture status:", progress["status"])
+    if child.wait() != 0:
+        raise SystemExit(child.returncode)
+```
+
+Les autres hôtes doivent aussi lire stderr en continu et analyser le préfixe/JSON. Si stdout et stderr sont tous deux redirigés vers des tubes, lire les deux. Les comptes décrivent le contenu capturé/encodé, pas les fichiers enregistrés. Même après un événement terminal de capture réussi, attendre le code de sortie 0 pour confirmer l’écriture.
 
 ## 3. Appel depuis un autre logiciel
 
@@ -126,6 +169,15 @@ pub fn capture_to_base64(
     quality: Option<u8>,
     stop: &std::sync::atomic::AtomicBool,
     mode: CaptureMode,
+) -> shotcraft_engine::Result<Vec<String>>;
+
+pub fn capture_to_base64_with_progress(
+    bounds: WindowBounds,
+    format: Option<String>,
+    quality: Option<u8>,
+    stop: &std::sync::atomic::AtomicBool,
+    mode: CaptureMode,
+    on_progress: impl FnMut(CaptureProgress),
 ) -> shotcraft_engine::Result<Vec<String>>;
 
 pub fn encode_image_to_base64(
@@ -169,7 +221,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-Choisir `CaptureMode::Stitched` pour une image longue ou `CaptureMode::Pages` pour des pages séparées. `Single` et `Stitched` renvoient une liste de longueur 1 ; `Pages` renvoie une chaîne par image retenue. Un résultat réussi contient au moins une image, renvoyée avec les autres à la fin de l’appel, sans rappel par image.
+Choisir `CaptureMode::Stitched` pour une image longue ou `CaptureMode::Pages` pour des pages séparées. `Single` et `Stitched` renvoient une liste de longueur 1 ; `Pages` renvoie une chaîne par image retenue. Un résultat d’images réussi contient au moins une image, renvoyée avec les autres à la fin de l’appel ; le rappel facultatif de progression ne transmet que des nombres et des états.
 
 L’API est synchrone et bloquante, sans le délai CLI de 10 secondes. Utiliser un thread de travail ou le `spawn_blocking` de l’hôte ; ne pas attendre un `join` synchrone dans le thread d’événements de l’interface. L’hôte gère visibilité, focus, permissions et raccourcis. La bibliothèque ne dépend pas de Tauri et ne fournit pas de raccourci global d’arrêt.
 
@@ -191,10 +243,70 @@ let base64 = shotcraft_engine::scrolling::encode_image_to_base64(
 
 Le décodage Base64 donne les octets du format choisi. Transmettre la chaîne directement si le destinataire attend du Base64 simple ; sinon ajouter `data:image/jpeg;base64,` ou `data:image/png;base64,`. En mode Pages, transmettre les images séparément dans l’ordre ; concaténer des chaînes Base64 ne crée pas une image. Aucun envoi automatique vers un service d’IA ou Pluely14 n’est réalisé.
 
+### Lire la progression en Rust
+
+L’entrée existante `capture_to_base64` reste utilisable sans rappel. Pour la progression, utiliser `capture_to_base64_with_progress` avec les cinq mêmes arguments puis une fonction de rappel. Dans le thread de travail de l’exemple précédent :
+
+```rust,ignore
+use shotcraft_engine::scrolling::{
+    CaptureMode, CaptureProgress, capture_to_base64_with_progress,
+};
+
+let images = capture_to_base64_with_progress(
+    bounds, Some("jpeg".into()), Some(80), &worker_stop, CaptureMode::Pages,
+    |progress: CaptureProgress| {
+        if let Some(count) = progress.captured_images {
+            println!("Captured images: {count}");
+        }
+        if let Some(screens) = progress.approximate_screens() {
+            println!("Captured approximately {screens:.1} screens");
+        }
+        println!("Simulated processing: {}%", progress.simulated_percent);
+        println!("Capture status: {:?}", progress.status);
+    },
+)?;
+```
+
+Choisir `CaptureMode::Single` pour obtenir `captured_images = Some(1)` en cas de réussite, `Pages` pour le nombre d’images retenues ou `Stitched` pour `approximate_screens()`. Les images restent renvoyées ensemble dans `Vec<String>` ; les événements ne contiennent ni image ni Base64.
+
+| Valeur Rust | Valeur JSON CLI | Signification |
+| --- | --- | --- |
+| `progress.mode` | `mode` : `single`, `pages`, `stitched` | Mode courant |
+| `progress.captured_images` | `captured_images` : entier ou `null` | Images retenues en Simple/Pages ; `None` / `null` en assemblage |
+| `progress.stitched_height` | `stitched_height` : entier ou `null` | Hauteur assemblée courante en pixels ; `None` / `null` sinon |
+| `progress.screen_height` | `screen_height` : entier | Hauteur de la première capture ; initialement 0, puis fixe |
+| `progress.approximate_screens()` | `approximate_screens` : nombre ou `null` | Hauteur assemblée divisée par la première hauteur non nulle ; indisponible sinon |
+| `progress.simulated_percent` | `simulated_percent` : entier 1–100 | Traitement simulé ; 100 après encodage réussi des résultats, pas après sauvegarde |
+| `progress.status` | `status` : chaîne ci-dessous | Phase ou raison de fin |
+
+### Pourcentage de traitement simulé
+
+Lire `progress.simulated_percent` en Rust ou `simulated_percent` dans le JSON CLI. Cet entier distinct va de **1 à 100** et représente une progression de traitement simulée, pas la position de défilement, la fraction de page capturée ou le temps restant. Il ne lit pas la barre de défilement et n’estime pas la hauteur totale. L’appel, les commandes et les arguments restent inchangés, sans nouvelle option.
+
+L’événement initial vaut 1 %. Chaque image retenue ou augmentation de hauteur assemblée avance vers 90 % avec `p = min(90, p + max(1, (90 - p) / 8))`, en division entière. Les événements de contenu successifs donnent par exemple 12 %, 21 %, 29 %, 36 %, 42 %, 48 %, puis ralentissent. L’encodage final Simple/Assemblé avance au minimum à 95 %. Pages encode chaque image pendant la capture : ces événements ne sautent pas à 95 %.
+
+Seul un événement terminal réussi, après encodage de toutes les images résultantes, indique 100 %. `Failed` conserve la valeur précédente inférieure à 100 %. Une sortie partielle réussie après `Stopped`, `FrameLimit` ou `HeightLimit` indique aussi 100 % : le traitement de cette tâche est fini, pas nécessairement la page entière. Consulter `status`. Les valeurs sont monotones dans une tâche, mais suivent les événements, peuvent se répéter ou sauter ; aucun minuteur ni passage par tous les entiers n’est garanti.
+
+Afficher « Traitement : 48 % », séparément de « 6 images / environ 2,4 écrans capturés ». En CLI, 100 % ne confirme toujours pas l’enregistrement : attendre le code de sortie 0. L’hôte peut animer entre les valeurs reçues, mais doit rester sous 100 avant la notification de réussite.
+
+| `CaptureStatus` | CLI `status` | Signification |
+| --- | --- | --- |
+| `Capturing` | `capturing` | État initial ou nouveau contenu validé |
+| `Encoding` | `encoding` | Encodage d’une image retenue ; peut se produire à chaque page |
+| `SingleFrame` | `single_frame` | Encodage simple réussi |
+| `Stopped` | `stopped` | Arrêt demandé ; contenu acquis encodé avec succès |
+| `Unchanged` | `unchanged` | Trois images consécutives inchangées ; ne prouve pas la fin de page |
+| `FrameLimit` | `frame_limit` | Limite de 50 tentatives atteinte |
+| `HeightLimit` | `height_limit` | Limite de hauteur assemblée atteinte |
+| `Failed` | `failed` | Échec de capture/encodage ; consulter le `Err` renvoyé |
+
+Les six derniers états sont terminaux pour la capture. Les événements terminaux réussis suivent l’encodage, pas l’écriture CLI. Un échec après avoir annoncé du contenu reste un résultat d’erreur sans images renvoyées ; le dernier compte n’est qu’informatif.
+
+Les rappels s’exécutent synchroniquement sur le thread de capture, pas automatiquement sur celui de l’interface. Ils doivent être rapides, non bloquants et sans panic ; transmettre seulement le petit état à la boucle UI/événements de l’hôte. Aucun signal périodique à fréquence fixe n’est garanti. L’hôte associe le rappel à sa tâche ; aucun stockage global ni registre de tâches n’est ajouté.
+
 ### CLI comme sous-processus
 
-Distribuer l’exécutable correspondant au système et à l’architecture, avec les licences requises. Le lancer avec les arguments ci-dessus et un nouveau répertoire, en conservant stdin dans un tube. Pour arrêter, écrire `stop
-` puis vider le tampon ; fermer stdin seul ne suffit pas. Attendre le code de sortie 0 avant de lire les fichiers `.jpg` / `.base64`. La CLI est un exécutable autonome ; l’intégration Rust directe utilise la dépendance source décrite ci-dessus.
+Distribuer l’exécutable correspondant au système et à l’architecture, avec les licences requises. Le lancer avec les arguments ci-dessus et un nouveau répertoire, en conservant stdin dans un tube. Pour arrêter, écrire `stop\n` puis vider le tampon ; fermer stdin seul ne suffit pas. Attendre le code de sortie 0 avant de lire les fichiers `.jpg` / `.base64`. La CLI est un exécutable autonome ; l’intégration Rust directe utilise la dépendance source décrite ci-dessus.
 
 ## 4. Plateformes et limites
 
